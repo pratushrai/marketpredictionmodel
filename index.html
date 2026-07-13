@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>US Real Estate Growth Dashboard</title>
+<meta name="description" content="Metro-level growth forecasts, affordability, and buy-and-hold scores for US real estate, refreshed daily from Zillow and Census data.">
+<style>
+:root {
+  --surface-1: #fcfcfb;
+  --page: #f9f9f7;
+  --text-1: #0b0b0b;
+  --text-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --series-1: #2a78d6;
+  --deemph: #c3c2b7;
+  --up-good: #006300;
+  --down-bad: #a03030;
+  --neutral-mid: #f0efec;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --text-1: #ffffff;
+    --text-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --deemph: #4a4a47;
+    --up-good: #0ca30c;
+    --down-bad: #e66767;
+    --neutral-mid: #383835;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --surface-1: #1a1a19;
+  --page: #0d0d0d;
+  --text-1: #ffffff;
+  --text-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --baseline: #383835;
+  --border: rgba(255,255,255,0.10);
+  --series-1: #3987e5;
+  --deemph: #4a4a47;
+  --up-good: #0ca30c;
+  --down-bad: #e66767;
+  --neutral-mid: #383835;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--page);
+  color: var(--text-1);
+  font-size: 14px;
+  line-height: 1.45;
+}
+a { color: var(--series-1); }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 20px 20px 48px; }
+header.top {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
+  padding: 6px 0 16px;
+}
+header.top h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.01em; }
+.top-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; margin-left: auto; color: var(--text-2); font-size: 12.5px; }
+.pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--up-good); margin-right: 5px; vertical-align: 1px; }
+button.ghost {
+  font: inherit; font-size: 12.5px; color: var(--text-2);
+  background: transparent; border: 1px solid var(--border); border-radius: 7px;
+  padding: 4px 10px; cursor: pointer;
+}
+button.ghost:hover { color: var(--text-1); border-color: var(--baseline); }
+.cards { display: grid; gap: 14px; }
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px 18px;
+}
+.card h2 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+.card .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.tile .label { color: var(--text-2); font-size: 12.5px; }
+.tile .value { font-size: 30px; font-weight: 600; letter-spacing: -0.01em; margin: 2px 0; }
+.tile .delta { font-size: 12.5px; color: var(--text-2); }
+.tile .delta .d-up { color: var(--up-good); font-weight: 600; }
+.tile .delta .d-down { color: var(--down-bad); font-weight: 600; }
+.filters {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  padding: 12px 16px; background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 12px;
+}
+.filters label { color: var(--text-2); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.filters input[type="search"], .filters select {
+  font: inherit; font-size: 13px; color: var(--text-1);
+  background: var(--page); border: 1px solid var(--border); border-radius: 7px;
+  padding: 5px 8px;
+}
+.filters input[type="search"] { width: 200px; }
+.filters .count { margin-left: auto; color: var(--muted); font-size: 12px; }
+.grid-2 { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(0, 1.1fr); gap: 14px; }
+.grid-2b { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 940px) { .grid-2, .grid-2b { grid-template-columns: minmax(0, 1fr); } }
+.card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.card-head .spacer { margin-left: auto; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.seg button {
+  font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer;
+  background: transparent; border: 0; color: var(--text-2);
+}
+.seg button[aria-pressed="true"] { background: var(--neutral-mid); color: var(--text-1); font-weight: 600; }
+svg text { font-family: inherit; }
+.axis-label { fill: var(--muted); font-size: 11px; }
+.tick-label { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.direct-label { fill: var(--text-2); font-size: 11px; paint-order: stroke; stroke: var(--surface-1); stroke-width: 3px; stroke-linejoin: round; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; color: var(--text-2); font-size: 12px; margin-top: 8px; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.legend .linekey { width: 16px; height: 2px; display: inline-block; border-radius: 1px; }
+.grad { height: 10px; border-radius: 5px; flex: 0 0 160px; }
+.tt {
+  position: fixed; z-index: 30; pointer-events: none; display: none;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px;
+  padding: 8px 11px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); max-width: 280px;
+}
+.tt .tt-title { font-weight: 600; font-size: 12.5px; margin-bottom: 3px; }
+.tt .tt-row { display: flex; gap: 10px; justify-content: space-between; font-size: 12px; }
+.tt .tt-row .k { color: var(--text-2); display: inline-flex; align-items: center; gap: 6px; }
+.tt .tt-row .k .lk { width: 12px; height: 2px; border-radius: 1px; display: inline-block; }
+.tt .tt-row .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; }
+table.rank { border-collapse: collapse; width: 100%; font-size: 12.5px; min-width: 980px; }
+table.rank th, table.rank td { text-align: right; padding: 7px 10px; white-space: nowrap; }
+table.rank th:nth-child(2), table.rank td:nth-child(2) { text-align: left; }
+table.rank thead th {
+  color: var(--text-2); font-weight: 600; border-bottom: 1px solid var(--baseline);
+  cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface-1);
+}
+table.rank thead th:hover { color: var(--text-1); }
+table.rank tbody td { border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+table.rank tbody tr { cursor: pointer; }
+table.rank tbody tr:hover { background: var(--neutral-mid); }
+table.rank tbody tr.sel { background: color-mix(in srgb, var(--series-1) 12%, var(--surface-1)); }
+.scorepill { display: inline-block; min-width: 38px; text-align: center; padding: 1px 6px; border-radius: 6px; font-weight: 600; }
+.detail-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin: 10px 0 4px; }
+.detail-stats .ds { border-top: 1px solid var(--grid); padding-top: 6px; }
+.detail-stats .ds .k { color: var(--muted); font-size: 11.5px; }
+.detail-stats .ds .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.note { color: var(--muted); font-size: 12px; }
+.src-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.src-pill { font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; color: var(--text-2); }
+.src-pill.ok::before { content: "✓ "; color: var(--up-good); font-weight: 700; }
+.src-pill.bad::before { content: "✕ "; color: var(--down-bad); font-weight: 700; }
+.meth p { margin: 8px 0; color: var(--text-2); font-size: 13px; max-width: 84ch; }
+.meth table { border-collapse: collapse; font-size: 12.5px; margin: 8px 0; }
+.meth td, .meth th { border-bottom: 1px solid var(--grid); padding: 5px 14px 5px 0; text-align: left; color: var(--text-2); }
+.meth th { color: var(--text-1); font-weight: 600; }
+.banner {
+  border: 1px solid var(--border); border-left: 3px solid var(--series-1);
+  background: var(--surface-1); border-radius: 10px; padding: 14px 16px; font-size: 13px; color: var(--text-2);
+}
+.banner b { color: var(--text-1); }
+.loading-dim { opacity: 0.55; transition: opacity .25s; }
+.updated-flash { animation: flash 1.6s ease-out; }
+@keyframes flash { 0% { background: color-mix(in srgb, var(--series-1) 18%, var(--surface-1)); } 100% { background: var(--surface-1); } }
+footer { margin-top: 26px; color: var(--muted); font-size: 12px; }
+.map-hint { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+.bar-hit:hover .bar-fill, .bar-hit:focus .bar-fill { filter: brightness(1.12); }
+.bar-hit:focus { outline: none; }
+.bar-hit:focus .bar-fill { stroke: var(--text-1); stroke-width: 1px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>US Real Estate Growth Dashboard</h1>
+    <div class="top-meta">
+      <span id="live-state"><span class="pulse"></span><span id="live-text">loading…</span></span>
+      <span id="refresh-count" title="The page re-checks for a fresh model run every 15 minutes; the model itself is recomputed daily by GitHub Actions."></span>
+      <button class="ghost" id="theme-btn" type="button">Theme: auto</button>
+    </div>
+  </header>
+
+  <div id="first-run" class="banner" style="display:none; margin-bottom:14px;">
+    <b>Waiting for the first data refresh.</b> The GitHub Actions workflow
+    <i>Refresh real estate market data</i> builds <code>real-estate/data/market-data.json</code>
+    from Zillow and US Census sources and commits it. It runs automatically on push and daily at
+    10:23 UTC; you can also trigger it from the repository's Actions tab. This page re-checks every
+    minute until data appears.
+  </div>
+
+  <div class="cards" id="dash" style="display:none;">
+    <section class="kpis" id="kpis" aria-label="National headline figures"></section>
+
+    <div class="filters" role="group" aria-label="Filters — scope every chart and the table below">
+      <label>Search <input id="f-search" type="search" placeholder="Metro or state…"></label>
+      <label>State <select id="f-state"><option value="">All states</option></select></label>
+      <label>Metro size
+        <select id="f-size">
+          <option value="0">Any population</option>
+          <option value="1000000">1M+ people</option>
+          <option value="250000">250K+ people</option>
+          <option value="100000">100K+ people</option>
+        </select>
+      </label>
+      <label>Price band
+        <select id="f-price">
+          <option value="">Any price</option>
+          <option value="0-250000">Under $250K</option>
+          <option value="250000-400000">$250K – $400K</option>
+          <option value="400000-600000">$400K – $600K</option>
+          <option value="600000-99999999">Over $600K</option>
+        </select>
+      </label>
+      <button class="ghost" id="f-reset" type="button">Reset</button>
+      <span class="count" id="f-count"></span>
+    </div>
+
+    <div class="grid-2">
+      <section class="card" id="map-card">
+        <div class="card-head">
+          <div>
+            <h2>Metro map</h2>
+            <div class="sub">Dot size = population · color = selected metric · click a metro for detail</div>
+          </div>
+          <div class="spacer"></div>
+          <div class="seg" role="group" aria-label="Map color metric" id="map-metric">
+            <button type="button" data-m="pred" aria-pressed="true">Forecast 12-mo growth</button>
+            <button type="button" data-m="buyHoldScore" aria-pressed="false">Buy &amp; hold score</button>
+            <button type="button" data-m="affordScore" aria-pressed="false">Affordability</button>
+          </div>
+        </div>
+        <div id="map-box"></div>
+        <div class="legend" id="map-legend"></div>
+        <div class="map-hint" id="map-hint"></div>
+      </section>
+
+      <section class="card" id="detail-card">
+        <h2 id="detail-name">Metro detail</h2>
+        <div class="sub" id="detail-sub">Select a metro on the map, chart, or table.</div>
+        <div id="detail-body"></div>
+      </section>
+    </div>
+
+    <div class="grid-2b">
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Growth vs. affordability</h2>
+            <div class="sub">Upper-left = the buy-and-hold sweet spot (cheap relative to income, forecast to appreciate)</div>
+          </div>
+        </div>
+        <div id="scatter-box"></div>
+        <div class="legend" id="scatter-legend"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Strongest forecast appreciation</h2>
+            <div class="sub">Top 20 metros in the current slice, by forecast 12-month growth</div>
+          </div>
+        </div>
+        <div id="bars-box"></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2>Metro rankings — full data table</h2>
+          <div class="sub">Click a column to sort · click a row for detail · this table is the accessible twin of every chart above</div>
+        </div>
+        <div class="spacer"></div>
+        <button class="ghost" id="tbl-toggle" type="button">Show all</button>
+      </div>
+      <div class="table-scroll">
+        <table class="rank" id="tbl">
+          <thead><tr id="tbl-head"></tr></thead>
+          <tbody id="tbl-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card meth" id="meth">
+      <h2>Methodology, data sources &amp; caveats</h2>
+      <div id="meth-body"></div>
+    </section>
+  </div>
+
+  <footer>
+    Built as a static dashboard on GitHub Pages · data pipeline runs on GitHub Actions ·
+    sources: Zillow Research (ZHVI, ZORI, inventory), US Census Bureau (ACS 5-year, gazetteer).
+    Not investment advice.
+  </footer>
+</div>
+
+<div class="tt" id="tt" role="status"></div>
+
+<script>
+"use strict";
+/* ---------- palette (mirrors the CSS custom properties; JS needs concrete
+   values for canvas-free SVG fills that interpolate) ---------- */
+const PAL = {
+  light: { blueRamp: ["#cde2fb","#9ec5f4","#6da7ec","#3987e5","#256abf","#184f95","#0d366b"],
+           posPole: "#1c5cab", negPole: "#c22f2e", mid: "#f0efec",
+           surface: "#fcfcfb", deemph: "#c3c2b7", series1: "#2a78d6" },
+  dark:  { blueRamp: ["#0d366b","#184f95","#1c5cab","#256abf","#3987e5","#6da7ec","#9ec5f4"],
+           posPole: "#6da7ec", negPole: "#e66767", mid: "#383835",
+           surface: "#1a1a19", deemph: "#4a4a47", series1: "#3987e5" }
+};
+function mode() {
+  const t = document.documentElement.dataset.theme;
+  if (t === "dark") return "dark";
+  if (t === "light") return "light";
+  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+function pal() { return PAL[mode()]; }
+
+function hex2rgb(h) { return [1,3,5].map(i => parseInt(h.slice(i, i+2), 16)); }
+function mix(a, b, t) {
+  const A = hex2rgb(a), B = hex2rgb(b);
+  return "rgb(" + A.map((v,i) => Math.round(v + (B[i]-v)*t)).join(",") + ")";
+}
+function seqColor(t) { // 0..1 -> blue ramp
+  const r = pal().blueRamp, x = Math.max(0, Math.min(1, t)) * (r.length - 1);
+  const i = Math.min(r.length - 2, Math.floor(x));
+  return mix(r[i], r[i+1], x - i);
+}
+function divColor(v, lim) { // v in [-lim, lim] -> red..gray..blue
+  const p = pal(), t = Math.max(-1, Math.min(1, v / lim));
+  return t < 0 ? mix(p.mid, p.negPole, -t) : mix(p.mid, p.posPole, t);
+}
+function lum(cssColor) { // relative luminance of "rgb(r,g,b)" or "#hex"
+  const m = cssColor.match(/\d+/g).map(Number);
+  const [r, g, b] = m.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/* ---------- formatting ---------- */
+const fmtMoney = v => v == null ? "—" : "$" + (v >= 1e6 ? (v/1e6).toFixed(2) + "M" : v >= 1e3 ? Math.round(v/1e3) + "K" : Math.round(v));
+const fmtMoneyFull = v => v == null ? "—" : "$" + Math.round(v).toLocaleString("en-US");
+const fmtPct = (v, d=1) => v == null ? "—" : (v >= 0 ? "+" : "") + (100*v).toFixed(d) + "%";
+const fmtPctU = (v, d=1) => v == null ? "—" : (100*v).toFixed(d) + "%";
+const fmtNum = v => v == null ? "—" : v >= 1e6 ? (v/1e6).toFixed(1) + "M" : v >= 1e3 ? Math.round(v/1e3) + "K" : String(Math.round(v));
+const fmtRatio = v => v == null ? "—" : v.toFixed(1) + "×";
+
+/* ---------- state ---------- */
+const S = {
+  data: null, selectedId: null, showAllRows: false,
+  mapMetric: "pred",
+  sortKey: "buyHoldScore", sortDir: -1,
+  filters: { q: "", state: "", size: 0, price: "" },
+  nextCheck: null, us: null, d3ok: null,
+};
+const $ = id => document.getElementById(id);
+const tt = $("tt");
+
+function showTT(x, y, title, rows) {
+  tt.replaceChildren();
+  const t = document.createElement("div"); t.className = "tt-title"; t.textContent = title; tt.appendChild(t);
+  for (const [k, v, color] of rows) {
+    const r = document.createElement("div"); r.className = "tt-row";
+    const kk = document.createElement("span"); kk.className = "k";
+    if (color) { const lk = document.createElement("span"); lk.className = "lk"; lk.style.background = color; kk.appendChild(lk); }
+    kk.appendChild(document.createTextNode(k));
+    const vv = document.createElement("span"); vv.className = "v"; vv.textContent = v;
+    r.append(kk, vv); tt.appendChild(r);
+  }
+  tt.style.display = "block";
+  const w = tt.offsetWidth, h = tt.offsetHeight;
+  tt.style.left = Math.min(innerWidth - w - 10, x + 14) + "px";
+  tt.style.top = (y - h - 12 < 8 ? y + 16 : y - h - 12) + "px";
+}
+function hideTT() { tt.style.display = "none"; }
+
+/* ---------- data loading & auto-refresh ---------- */
+const CHECK_MS = 15 * 60 * 1000, FIRSTRUN_CHECK_MS = 60 * 1000;
+async function loadData(initial) {
+  const dash = $("dash");
+  if (!initial) dash.classList.add("loading-dim");
+  try {
+    const r = await fetch("data/market-data.json?v=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    const isNew = !S.data || j.generatedAt !== S.data.generatedAt;
+    S.data = j;
+    $("first-run").style.display = "none";
+    dash.style.display = "grid";
+    if (isNew) {
+      buildStateFilter(); renderAll();
+      if (!initial) { dash.classList.add("updated-flash"); setTimeout(() => dash.classList.remove("updated-flash"), 1700); }
+    }
+    setLive(true);
+  } catch (e) {
+    if (!S.data) { $("first-run").style.display = "block"; setLive(false, "awaiting first data build"); }
+    else setLive(true, "showing last good data (refresh check failed)");
+  } finally {
+    dash.classList.remove("loading-dim");
+    S.nextCheck = Date.now() + (S.data ? CHECK_MS : FIRSTRUN_CHECK_MS);
+  }
+}
+function setLive(ok, msg) {
+  const el = $("live-text");
+  if (ok && S.data) {
+    const dt = new Date(S.data.generatedAt);
+    el.textContent = (msg ? msg + " · " : "") + "model run " + dt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  } else el.textContent = msg || "no data yet";
+}
+setInterval(() => {
+  if (S.nextCheck == null) return;
+  const left = S.nextCheck - Date.now();
+  if (left <= 0) { S.nextCheck = null; loadData(false); return; }
+  const m = Math.floor(left / 60000), s = Math.floor(left % 60000 / 1000);
+  $("refresh-count").textContent = "next data check " + (m > 0 ? m + "m " : "") + s + "s";
+}, 1000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && S.nextCheck && S.nextCheck - Date.now() > CHECK_MS) loadData(false);
+});
+
+/* ---------- filters ---------- */
+function buildStateFilter() {
+  const sel = $("f-state"), cur = S.filters.state;
+  const states = [...new Set(S.data.metros.map(m => m.state).filter(Boolean))].sort();
+  sel.replaceChildren(new Option("All states", ""));
+  for (const st of states) sel.appendChild(new Option(st, st));
+  sel.value = cur;
+}
+function filtered() {
+  const f = S.filters, q = f.q.trim().toLowerCase();
+  return S.data.metros.filter(m => {
+    if (q && !m.name.toLowerCase().includes(q)) return false;
+    if (f.state && m.state !== f.state) return false;
+    if (f.size > 0 && !(m.pop >= f.size)) return false;
+    if (f.price) {
+      const [lo, hi] = f.price.split("-").map(Number);
+      if (!(m.zhvi >= lo && m.zhvi < hi)) return false;
+    }
+    return true;
+  });
+}
+$("f-search").addEventListener("input", e => { S.filters.q = e.target.value; renderAll(); });
+$("f-state").addEventListener("change", e => { S.filters.state = e.target.value; renderAll(); });
+$("f-size").addEventListener("change", e => { S.filters.size = +e.target.value; renderAll(); });
+$("f-price").addEventListener("change", e => { S.filters.price = e.target.value; renderAll(); });
+$("f-reset").addEventListener("click", () => {
+  S.filters = { q: "", state: "", size: 0, price: "" };
+  $("f-search").value = ""; $("f-state").value = ""; $("f-size").value = "0"; $("f-price").value = "";
+  renderAll();
+});
+
+/* ---------- KPI tiles ---------- */
+function sparkline(points, w=110, h=30) {
+  const svg = el("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
+  if (points.length < 2) return svg;
+  const min = Math.min(...points), max = Math.max(...points), span = (max - min) || 1;
+  const X = i => 2 + i * (w - 8) / (points.length - 1);
+  const Y = v => h - 4 - (v - min) / span * (h - 10);
+  svg.appendChild(el("path", {
+    d: points.map((v,i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(""),
+    fill: "none", stroke: pal().deemph, "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round"
+  }));
+  const lx = X(points.length - 1), ly = Y(points.at(-1));
+  svg.appendChild(el("circle", { cx: lx, cy: ly, r: 4, fill: pal().series1, stroke: pal().surface, "stroke-width": 2 }));
+  return svg;
+}
+function nationalSeries() { // median ZHVI across metros at each shared quarter
+  const byDate = new Map();
+  for (const m of S.data.metros) for (const [d, v] of m.series || []) {
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push(v);
+  }
+  return [...byDate.entries()].sort((a,b) => a[0] < b[0] ? -1 : 1)
+    .filter(([,vs]) => vs.length > S.data.metros.length * 0.5)
+    .map(([d, vs]) => { vs.sort((a,b) => a-b); return [d, vs[vs.length >> 1]]; });
+}
+function tile(label, value, deltaHTMLParts, points) {
+  const d = document.createElement("div"); d.className = "card tile";
+  const l = document.createElement("div"); l.className = "label"; l.textContent = label;
+  const v = document.createElement("div"); v.className = "value"; v.textContent = value;
+  const row = document.createElement("div"); row.style.cssText = "display:flex;align-items:flex-end;gap:12px;justify-content:space-between;";
+  const dd = document.createElement("div"); dd.className = "delta";
+  for (const p of deltaHTMLParts) dd.appendChild(p);
+  row.appendChild(dd);
+  if (points) row.appendChild(sparkline(points.slice(-12)));
+  d.append(l, v, row);
+  return d;
+}
+function deltaSpan(v, suffix, upIsGood=true) {
+  const s = document.createElement("span");
+  if (v == null) { s.textContent = "—"; return [s]; }
+  s.className = (v >= 0) === upIsGood ? "d-up" : "d-down";
+  s.textContent = fmtPct(v);
+  const t = document.createElement("span"); t.textContent = " " + suffix;
+  return [s, t];
+}
+function renderKPIs() {
+  const n = S.data.national, box = $("kpis");
+  const natSeries = nationalSeries().map(p => p[1]);
+  box.replaceChildren(
+    tile("National median metro home value", fmtMoney(n.zhvi), deltaSpan(n.g1, "past 12 mo"), natSeries),
+    tile("Median forecast, next 12 mo", fmtPct(n.predMedian), [noteSpan("model estimate across " + S.data.coverage.metros + " metros")]),
+    tile("Median price-to-income", n.pti ? n.pti.toFixed(1) + "×" : "—", [noteSpan("home value ÷ household income")]),
+    tile("Median gross rent yield", fmtPctU(n.rentYield), [noteSpan("annual rent ÷ home value")])
+  );
+}
+function noteSpan(txt) { const s = document.createElement("span"); s.textContent = txt; return s; }
+
+/* ---------- svg helpers ---------- */
+function el(tag, attrs) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+/* ---------- map ---------- */
+const MAP_METRIC_LABEL = { pred: "Forecast 12-mo growth", buyHoldScore: "Buy & hold score", affordScore: "Affordability score" };
+async function ensureMapLibs() {
+  if (S.d3ok !== null) return S.d3ok;
+  try {
+    await Promise.all([
+      import("https://cdn.jsdelivr.net/npm/d3-geo@3/+esm").then(m => window.__d3geo = m),
+    ]);
+    const r = await fetch("https://cdn.jsdelivr.net/npm/us-atlas@3/states-albers-10m.json");
+    if (!r.ok) throw new Error("atlas " + r.status);
+    const topo = await r.json();
+    const tj = await import("https://cdn.jsdelivr.net/npm/topojson-client@3/+esm");
+    S.us = tj.mesh(topo, topo.objects.states, (a, b) => true);
+    S.usNation = tj.feature(topo, topo.objects.nation);
+    S.d3ok = true;
+  } catch (e) {
+    console.warn("map libraries unavailable:", e);
+    S.d3ok = false;
+  }
+  return S.d3ok;
+}
+function mapColorFor(m, lim) {
+  const key = S.mapMetric;
+  if (key === "pred") return m.pred == null ? pal().deemph : divColor(m.pred, lim);
+  const v = m[key];
+  return v == null ? pal().deemph : seqColor(v / 100);
+}
+async function renderMap() {
+  const box = $("map-box"), legend = $("map-legend"), hint = $("map-hint");
+  const ok = await ensureMapLibs();
+  if (!ok) {
+    box.replaceChildren();
+    const p = document.createElement("p"); p.className = "note";
+    p.textContent = "Map libraries could not load (offline or CDN blocked). All map data remains available in the rankings table below.";
+    box.appendChild(p); legend.replaceChildren(); hint.textContent = "";
+    return;
+  }
+  const W = 975, H = 610;
+  const proj = window.__d3geo.geoAlbersUsa().scale(1300).translate([W/2 + 0, H/2 - 0]);
+  const path = window.__d3geo.geoPath();
+  const rows = filtered().filter(m => m.lat != null);
+  const lim = Math.max(0.04, ...S.data.metros.map(m => Math.abs(m.pred ?? 0)).sort((a,b)=>a-b).slice(-20, -19)); // robust limit ~95th pct
+  const maxPop = Math.max(1, ...rows.map(m => m.pop || 0));
+  const R = m => m.pop ? 2.2 + 11 * Math.sqrt(m.pop / maxPop) : 2.6;
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;height:auto;display:block;", role: "img",
+    "aria-label": "US map of metros colored by " + MAP_METRIC_LABEL[S.mapMetric] });
+  svg.appendChild(el("path", { d: path(S.usNation), fill: "var(--neutral-mid)", "fill-opacity": 0.55 }));
+  svg.appendChild(el("path", { d: path(S.us), fill: "none", stroke: "var(--grid)", "stroke-width": 1 }));
+
+  const pts = [];
+  const sorted = [...rows].sort((a,b) => (b.pop||0) - (a.pop||0)); // big dots painted first
+  for (const m of sorted) {
+    const xy = proj([m.lon, m.lat]);
+    if (!xy) continue;
+    const r = R(m), selectedNow = m.id === S.selectedId;
+    const c = el("circle", { cx: xy[0], cy: xy[1], r, fill: mapColorFor(m, lim), "fill-opacity": 0.92,
+      stroke: selectedNow ? "var(--text-1)" : "var(--surface-1)", "stroke-width": selectedNow ? 2 : 1.4 });
+    svg.appendChild(c);
+    pts.push({ x: xy[0], y: xy[1], m, r });
+  }
+  svg.style.cursor = "crosshair";
+  svg.addEventListener("pointermove", ev => {
+    const p = nearest(svg, ev, pts, 46);
+    if (!p) { hideTT(); return; }
+    const m = p.m;
+    showTT(ev.clientX, ev.clientY, m.name, [
+      ["Home value (ZHVI)", fmtMoney(m.zhvi)],
+      ["Forecast 12-mo", fmtPct(m.pred)],
+      ["12-mo growth", fmtPct(m.g1)],
+      ["Buy & hold score", m.buyHoldScore == null ? "—" : m.buyHoldScore.toFixed(0) + "/100"],
+      ["Population", fmtNum(m.pop)],
+    ]);
+  });
+  svg.addEventListener("pointerleave", hideTT);
+  svg.addEventListener("click", ev => {
+    const p = nearest(svg, ev, pts, 46);
+    if (p) selectMetro(p.m.id);
+  });
+  box.replaceChildren(svg);
+
+  legend.replaceChildren();
+  if (S.mapMetric === "pred") {
+    legend.append(gradBar([pal().negPole, pal().mid, pal().posPole]),
+      keyText(fmtPct(-lim) + " (decline)"), keyText("0%"), keyText(fmtPct(lim) + " (growth)"));
+  } else {
+    legend.append(gradBar([pal().blueRamp[0], pal().blueRamp[3], pal().blueRamp[6]]),
+      keyText("0 (weak)"), keyText("100 (strong)"));
+  }
+  const total = filtered().length;
+  hint.textContent = rows.length + " of " + total + " metros in the current slice have map coordinates.";
+}
+function gradBar(stops) {
+  const d = document.createElement("span"); d.className = "grad";
+  d.style.background = "linear-gradient(90deg," + stops.join(",") + ")";
+  return d;
+}
+function keyText(t) { const s = document.createElement("span"); s.textContent = t; return s; }
+function nearest(svg, ev, pts, maxPx) {
+  const r = svg.getBoundingClientRect();
+  const sx = svg.viewBox.baseVal.width / r.width, sy = svg.viewBox.baseVal.height / r.height;
+  const x = (ev.clientX - r.left) * sx, y = (ev.clientY - r.top) * sy;
+  let best = null, bd = Infinity;
+  for (const p of pts) {
+    const d = (p.x - x) ** 2 + (p.y - y) ** 2;
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best && Math.sqrt(bd) <= Math.max(maxPx, (best.r || 0) + 24) * Math.max(sx, sy) ? best : null;
+}
+$("map-metric").addEventListener("click", ev => {
+  const b = ev.target.closest("button"); if (!b) return;
+  S.mapMetric = b.dataset.m;
+  for (const bb of $("map-metric").querySelectorAll("button")) bb.setAttribute("aria-pressed", String(bb === b));
+  renderMap();
+});
+
+/* ---------- scatter: affordability vs forecast growth ---------- */
+function renderScatter() {
+  const box = $("scatter-box"), legend = $("scatter-legend");
+  const rows = filtered().filter(m => m.pti != null && m.pred != null);
+  const W = 640, H = 400, ML = 52, MR = 16, MT = 14, MB = 42;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;height:auto;display:block;", role: "img",
+    "aria-label": "Scatter plot of price-to-income ratio versus forecast growth" });
+  box.replaceChildren(svg); legend.replaceChildren();
+  if (rows.length < 3) { boxNote(box, "Not enough metros in this slice to draw the chart."); return; }
+
+  const xs = rows.map(m => m.pti), ys = rows.map(m => m.pred);
+  const xmax = Math.min(Math.max(...xs), quantile(xs, 0.99) * 1.15);
+  const xmin = Math.min(...xs) * 0.9;
+  const ymin = Math.min(...ys), ymax = Math.max(...ys);
+  const ypad = (ymax - ymin) * 0.08 || 0.01;
+  const X = v => ML + (Math.min(v, xmax) - xmin) / (xmax - xmin) * (W - ML - MR);
+  const Y = v => MT + (ymax + ypad - v) / (ymax - ymin + 2*ypad) * (H - MT - MB);
+
+  for (const gv of niceTicks(ymin, ymax, 5)) {
+    svg.appendChild(el("line", { x1: ML, x2: W - MR, y1: Y(gv), y2: Y(gv), stroke: "var(--grid)", "stroke-width": 1 }));
+    const t = el("text", { x: ML - 8, y: Y(gv) + 3.5, "text-anchor": "end", class: "tick-label" });
+    t.textContent = fmtPct(gv, 0); svg.appendChild(t);
+  }
+  for (const gv of niceTicks(xmin, xmax, 6)) {
+    const t = el("text", { x: X(gv), y: H - MB + 18, "text-anchor": "middle", class: "tick-label" });
+    t.textContent = gv.toFixed(0) + "×"; svg.appendChild(t);
+    svg.appendChild(el("line", { x1: X(gv), x2: X(gv), y1: H - MB, y2: H - MB + 4, stroke: "var(--baseline)", "stroke-width": 1 }));
+  }
+  svg.appendChild(el("line", { x1: ML, x2: W - MR, y1: H - MB, y2: H - MB, stroke: "var(--baseline)", "stroke-width": 1 }));
+  const xl = el("text", { x: (ML + W - MR)/2, y: H - 6, "text-anchor": "middle", class: "axis-label" });
+  xl.textContent = "Price-to-income ratio (lower = more affordable)"; svg.appendChild(xl);
+  const yl = el("text", { x: 12, y: MT + 4, class: "axis-label" });
+  yl.textContent = "Forecast 12-mo growth"; svg.appendChild(yl);
+
+  const topIds = new Set([...rows].sort((a,b) => (b.buyHoldScore||0) - (a.buyHoldScore||0)).slice(0, 15).map(m => m.id));
+  const labelIds = new Set([...topIds].slice(0, 5));
+  const pts = [];
+  for (const m of rows) {
+    if (topIds.has(m.id)) continue;
+    const c = el("circle", { cx: X(m.pti), cy: Y(m.pred), r: 4, fill: pal().deemph, "fill-opacity": 0.75,
+      stroke: "var(--surface-1)", "stroke-width": 1.5 });
+    svg.appendChild(c); pts.push({ x: X(m.pti), y: Y(m.pred), m });
+  }
+  for (const m of rows) {
+    if (!topIds.has(m.id)) continue;
+    const selNow = m.id === S.selectedId;
+    const c = el("circle", { cx: X(m.pti), cy: Y(m.pred), r: 5.5, fill: pal().series1,
+      stroke: selNow ? "var(--text-1)" : "var(--surface-1)", "stroke-width": 2 });
+    svg.appendChild(c); pts.push({ x: X(m.pti), y: Y(m.pred), m });
+    if (labelIds.has(m.id)) {
+      const t = el("text", { x: X(m.pti) + 8, y: Y(m.pred) - 6, class: "direct-label" });
+      t.textContent = m.name.split(",")[0]; svg.appendChild(t);
+    }
+  }
+  svg.style.cursor = "crosshair";
+  svg.addEventListener("pointermove", ev => {
+    const p = nearest(svg, ev, pts, 30);
+    if (!p) { hideTT(); return; }
+    showTT(ev.clientX, ev.clientY, p.m.name, [
+      ["Forecast 12-mo", fmtPct(p.m.pred)],
+      ["Price-to-income", fmtRatio(p.m.pti)],
+      ["Home value", fmtMoney(p.m.zhvi)],
+      ["Buy & hold score", p.m.buyHoldScore == null ? "—" : p.m.buyHoldScore.toFixed(0) + "/100"],
+    ]);
+  });
+  svg.addEventListener("pointerleave", hideTT);
+  svg.addEventListener("click", ev => { const p = nearest(svg, ev, pts, 30); if (p) selectMetro(p.m.id); });
+
+  legend.append(
+    keyPair(pal().series1, "Top 15 buy-and-hold metros in slice"),
+    keyPair(pal().deemph, "Other metros")
+  );
+}
+function keyPair(color, label) {
+  const k = document.createElement("span"); k.className = "key";
+  const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = color;
+  k.append(sw, document.createTextNode(label));
+  return k;
+}
+function boxNote(box, txt) { const p = document.createElement("p"); p.className = "note"; p.textContent = txt; box.appendChild(p); }
+function quantile(arr, q) {
+  const a = [...arr].sort((x,y) => x-y);
+  const i = (a.length - 1) * q, lo = Math.floor(i);
+  return a[lo] + (a[Math.min(lo+1, a.length-1)] - a[lo]) * (i - lo);
+}
+function niceTicks(min, max, n) {
+  const span = max - min || 1, step0 = span / n, mag = 10 ** Math.floor(Math.log10(step0));
+  const step = [1, 2, 2.5, 5, 10].map(s => s * mag).find(s => span / s <= n) || mag * 10;
+  const out = [];
+  for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+/* ---------- top-20 bars ---------- */
+function renderBars() {
+  const box = $("bars-box");
+  const rows = filtered().filter(m => m.pred != null)
+    .sort((a,b) => b.pred - a.pred).slice(0, 20);
+  const BAR = 18, GAP = 8, ML = 150, MR = 62, MT = 6, MB = 26;
+  const W = 520, H = MT + rows.length * (BAR + GAP) + MB;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;height:auto;display:block;", role: "img",
+    "aria-label": "Bar chart of top metros by forecast growth" });
+  box.replaceChildren(svg);
+  if (!rows.length) { boxNote(box, "No metros match the current filters."); return; }
+  const vmax = Math.max(...rows.map(m => m.pred), 0.001);
+  const X = v => ML + Math.max(0, v) / vmax * (W - ML - MR);
+  for (const gv of niceTicks(0, vmax, 4)) {
+    svg.appendChild(el("line", { x1: X(gv), x2: X(gv), y1: MT, y2: H - MB, stroke: "var(--grid)", "stroke-width": 1 }));
+    const t = el("text", { x: X(gv), y: H - MB + 16, "text-anchor": "middle", class: "tick-label" });
+    t.textContent = fmtPct(gv, 0); svg.appendChild(t);
+  }
+  svg.appendChild(el("line", { x1: ML, x2: ML, y1: MT, y2: H - MB, stroke: "var(--baseline)", "stroke-width": 1 }));
+  rows.forEach((m, i) => {
+    const y = MT + i * (BAR + GAP), wpx = Math.max(2, X(m.pred) - ML);
+    const g = el("g", { class: "bar-hit", tabindex: "0", role: "img",
+      "aria-label": m.name + " forecast " + fmtPct(m.pred) });
+    // rounded data-end, square baseline
+    const rr = Math.min(4, wpx / 2);
+    g.appendChild(el("path", { class: "bar-fill",
+      d: `M${ML} ${y} h${wpx - rr} a${rr} ${rr} 0 0 1 ${rr} ${rr} v${BAR - 2*rr} a${rr} ${rr} 0 0 1 -${rr} ${rr} h-${wpx - rr} Z`,
+      fill: m.id === S.selectedId ? pal().blueRamp[5] : pal().series1 }));
+    const name = el("text", { x: ML - 8, y: y + BAR/2 + 4, "text-anchor": "end", class: "tick-label" });
+    name.textContent = shortName(m); g.appendChild(name);
+    const val = el("text", { x: ML + wpx + 6, y: y + BAR/2 + 4, class: "direct-label", style: "font-variant-numeric:tabular-nums;" });
+    val.textContent = fmtPct(m.pred); g.appendChild(val);
+    const hit = el("rect", { x: 0, y: y - GAP/2, width: W, height: BAR + GAP, fill: "transparent", style: "cursor:pointer;" });
+    hit.addEventListener("pointermove", ev => showTT(ev.clientX, ev.clientY, m.name, [
+      ["Forecast 12-mo", fmtPct(m.pred)],
+      ["Past 12-mo", fmtPct(m.g1)],
+      ["Home value", fmtMoney(m.zhvi)],
+      ["Affordability score", m.affordScore == null ? "—" : m.affordScore.toFixed(0) + "/100"],
+    ]));
+    hit.addEventListener("pointerleave", hideTT);
+    hit.addEventListener("click", () => selectMetro(m.id));
+    g.appendChild(hit);
+    svg.appendChild(g);
+  });
+}
+function shortName(m) {
+  const city = m.name.split(",")[0];
+  return (city.length > 16 ? city.slice(0, 15) + "…" : city) + ", " + m.state;
+}
+
+/* ---------- detail panel ---------- */
+function selectMetro(id) {
+  S.selectedId = id;
+  renderDetail(); renderMap(); renderScatter(); renderBars(); renderTable();
+  const card = $("detail-card");
+  if (card.getBoundingClientRect().top < 0 || card.getBoundingClientRect().bottom > innerHeight)
+    card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+function renderDetail() {
+  const m = S.data.metros.find(x => x.id === S.selectedId);
+  const body = $("detail-body");
+  if (!m) {
+    $("detail-name").textContent = "Metro detail";
+    $("detail-sub").textContent = "Select a metro on the map, chart, or table.";
+    body.replaceChildren(); return;
+  }
+  $("detail-name").textContent = m.name;
+  $("detail-sub").textContent = "Buy & hold rank #" + (S.data.metros.indexOf(m) + 1) + " of " + S.data.metros.length +
+    " · data as of " + (m.asof || "—");
+  body.replaceChildren();
+
+  const grid = document.createElement("div"); grid.className = "detail-stats";
+  const stats = [
+    ["Home value (ZHVI)", fmtMoneyFull(m.zhvi)],
+    ["Forecast 12-mo growth", fmtPct(m.pred)],
+    ["Past 12-mo growth", fmtPct(m.g1)],
+    ["3-yr growth (annualized)", fmtPct(m.g3a)],
+    ["Typical rent (ZORI)", m.rent ? fmtMoneyFull(m.rent) + "/mo" : "—"],
+    ["Gross rent yield", fmtPctU(m.rentYield)],
+    ["Median household income", fmtMoneyFull(m.income)],
+    ["Price-to-income", fmtRatio(m.pti)],
+    ["Population", m.pop ? Math.round(m.pop).toLocaleString("en-US") : "—"],
+    ["Pop. growth (5-yr ann.)", fmtPct(m.popGrowth)],
+    ["Unemployment", fmtPctU(m.unemployment)],
+    ["Scores G / A / B&H", [m.growthScore, m.affordScore, m.buyHoldScore].map(v => v == null ? "—" : Math.round(v)).join(" / ")],
+  ];
+  for (const [k, v] of stats) {
+    const d = document.createElement("div"); d.className = "ds";
+    const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k;
+    const vv = document.createElement("div"); vv.className = "v"; vv.textContent = v;
+    d.append(kk, vv); grid.appendChild(d);
+  }
+  body.appendChild(grid);
+
+  if (m.series && m.series.length > 3) {
+    const h = document.createElement("div"); h.className = "sub"; h.style.margin = "10px 0 2px";
+    h.textContent = "Home value history, ~10 years (quarterly ZHVI)";
+    body.appendChild(h);
+    body.appendChild(lineChart(m.series));
+  }
+}
+function lineChart(series) {
+  const W = 420, H = 190, ML = 46, MR = 14, MT = 10, MB = 26;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;height:auto;display:block;", role: "img", "aria-label": "Home value history line chart" });
+  const vals = series.map(p => p[1]);
+  const vmin = Math.min(...vals), vmax = Math.max(...vals), pad = (vmax - vmin) * 0.06 || 1;
+  const X = i => ML + i / (series.length - 1) * (W - ML - MR);
+  const Y = v => MT + (vmax + pad - v) / (vmax - vmin + 2*pad) * (H - MT - MB);
+  for (const gv of niceTicks(vmin, vmax, 4)) {
+    svg.appendChild(el("line", { x1: ML, x2: W - MR, y1: Y(gv), y2: Y(gv), stroke: "var(--grid)", "stroke-width": 1 }));
+    const t = el("text", { x: ML - 6, y: Y(gv) + 3.5, "text-anchor": "end", class: "tick-label" });
+    t.textContent = fmtMoney(gv); svg.appendChild(t);
+  }
+  const years = series.map((p,i) => [p[0], i]).filter(([d]) => d.endsWith("-03") || d.endsWith("-01"));
+  const yearStep = Math.ceil(years.length / 6);
+  years.filter((_, i) => i % yearStep === 0).forEach(([d, i]) => {
+    const t = el("text", { x: X(i), y: H - MB + 16, "text-anchor": "middle", class: "tick-label" });
+    t.textContent = d.slice(0, 4); svg.appendChild(t);
+  });
+  svg.appendChild(el("line", { x1: ML, x2: W - MR, y1: H - MB, y2: H - MB, stroke: "var(--baseline)", "stroke-width": 1 }));
+  const dPath = series.map((p,i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(p[1]).toFixed(1)).join("");
+  svg.appendChild(el("path", { d: dPath + `L${X(series.length-1)} ${H-MB} L${ML} ${H-MB} Z`, fill: pal().series1, "fill-opacity": 0.1, stroke: "none" }));
+  svg.appendChild(el("path", { d: dPath, fill: "none", stroke: pal().series1, "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round" }));
+  svg.appendChild(el("circle", { cx: X(series.length-1), cy: Y(vals.at(-1)), r: 4, fill: pal().series1, stroke: pal().surface, "stroke-width": 2 }));
+  const endT = el("text", { x: X(series.length-1) - 4, y: Y(vals.at(-1)) - 9, "text-anchor": "end", class: "direct-label" });
+  endT.textContent = fmtMoney(vals.at(-1)); svg.appendChild(endT);
+
+  const cross = el("line", { y1: MT, y2: H - MB, stroke: "var(--baseline)", "stroke-width": 1, visibility: "hidden" });
+  svg.appendChild(cross);
+  svg.addEventListener("pointermove", ev => {
+    const r = svg.getBoundingClientRect();
+    const x = (ev.clientX - r.left) * W / r.width;
+    const i = Math.max(0, Math.min(series.length - 1, Math.round((x - ML) / (W - ML - MR) * (series.length - 1))));
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i));
+    cross.setAttribute("visibility", "visible");
+    showTT(ev.clientX, ev.clientY, series[i][0], [["Home value", fmtMoneyFull(series[i][1]), pal().series1]]);
+  });
+  svg.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTT(); });
+  return svg;
+}
+
+/* ---------- rankings table ---------- */
+const COLS = [
+  { k: "_rank", label: "#", get: (m, i) => i + 1, fmt: v => String(v), sortable: false },
+  { k: "name", label: "Metro", get: m => m.name, fmt: v => v },
+  { k: "zhvi", label: "Home value", get: m => m.zhvi, fmt: fmtMoney },
+  { k: "g1", label: "12-mo growth", get: m => m.g1, fmt: fmtPct },
+  { k: "pred", label: "Forecast 12-mo", get: m => m.pred, fmt: fmtPct },
+  { k: "growthScore", label: "Growth", get: m => m.growthScore, fmt: v => v == null ? "—" : String(Math.round(v)), pill: true },
+  { k: "affordScore", label: "Afford.", get: m => m.affordScore, fmt: v => v == null ? "—" : String(Math.round(v)), pill: true },
+  { k: "buyHoldScore", label: "Buy & hold", get: m => m.buyHoldScore, fmt: v => v == null ? "—" : String(Math.round(v)), pill: true },
+  { k: "pti", label: "Price ÷ income", get: m => m.pti, fmt: fmtRatio },
+  { k: "rentYield", label: "Rent yield", get: m => m.rentYield, fmt: fmtPctU },
+  { k: "rent", label: "Rent", get: m => m.rent, fmt: v => v == null ? "—" : fmtMoney(v) },
+  { k: "pop", label: "Population", get: m => m.pop, fmt: fmtNum },
+  { k: "popGrowth", label: "Pop 5-yr", get: m => m.popGrowth, fmt: fmtPct },
+  { k: "income", label: "HH income", get: m => m.income, fmt: fmtMoney },
+];
+function renderTableHead() {
+  const tr = $("tbl-head"); tr.replaceChildren();
+  for (const c of COLS) {
+    const th = document.createElement("th");
+    th.textContent = c.label + (S.sortKey === c.k ? (S.sortDir < 0 ? " ↓" : " ↑") : "");
+    th.scope = "col";
+    if (c.sortable !== false) th.addEventListener("click", () => {
+      if (S.sortKey === c.k) S.sortDir *= -1;
+      else { S.sortKey = c.k; S.sortDir = c.k === "name" ? 1 : -1; }
+      renderTable();
+    });
+    tr.appendChild(th);
+  }
+}
+function renderTable() {
+  renderTableHead();
+  const body = $("tbl-body"); body.replaceChildren();
+  const col = COLS.find(c => c.k === S.sortKey);
+  const rows = [...filtered()].sort((a, b) => {
+    const va = col.get(a), vb = col.get(b);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    return (va < vb ? -1 : va > vb ? 1 : 0) * S.sortDir;
+  });
+  const limit = S.showAllRows ? rows.length : 100;
+  $("tbl-toggle").textContent = S.showAllRows ? "Show top 100" : "Show all " + rows.length;
+  $("f-count").textContent = rows.length + " metros in slice";
+  rows.slice(0, limit).forEach((m, i) => {
+    const tr = document.createElement("tr");
+    if (m.id === S.selectedId) tr.className = "sel";
+    COLS.forEach(c => {
+      const td = document.createElement("td");
+      const v = c.get(m, i);
+      if (c.pill && v != null) {
+        const p = document.createElement("span");
+        p.className = "scorepill";
+        const bg = seqColor(v / 100);
+        p.style.background = bg;
+        p.style.color = lum(bg) > 0.45 ? "#0b0b0b" : "#ffffff";
+        p.textContent = c.fmt(v);
+        td.appendChild(p);
+      } else td.textContent = c.fmt(v);
+      tr.appendChild(td);
+    });
+    tr.addEventListener("click", () => selectMetro(m.id));
+    body.appendChild(tr);
+  });
+}
+$("tbl-toggle").addEventListener("click", () => { S.showAllRows = !S.showAllRows; renderTable(); });
+
+/* ---------- methodology ---------- */
+const SRC_LABEL = {
+  zhvi: "Zillow ZHVI (home values)", zori: "Zillow ZORI (rents)", inventory: "Zillow for-sale inventory",
+  census_now: "Census ACS 5-yr (current)", census_past: "Census ACS 5-yr (5 yrs prior)", gazetteer: "Census CBSA coordinates",
+};
+function renderMeth() {
+  const d = S.data, box = $("meth-body");
+  box.replaceChildren();
+  const pills = document.createElement("div"); pills.className = "src-pills";
+  for (const [k, s] of Object.entries(d.sources)) {
+    const p = document.createElement("span");
+    p.className = "src-pill " + (s.ok ? "ok" : "bad");
+    p.textContent = (SRC_LABEL[k] || k) + (s.asof ? " · " + s.asof : "") + (s.ok ? "" : " (unavailable this run)");
+    pills.appendChild(p);
+  }
+  box.appendChild(pills);
+  const paras = [
+    "The 12-month forecast is a transparent momentum-plus-fundamentals composite, not a trained machine-learning model: a damped blend of each metro's recent appreciation (12-month ×" +
+      d.model.weights.momentum_1y + ", annualized 6-month ×" + d.model.weights.momentum_6m_annualized +
+      ", annualized 3-year ×" + d.model.weights.trend_3y_annualized + ", annualized 5-year ×" + d.model.weights.trend_5y_annualized +
+      "), tilted up for above-national population growth and rent yield, and dragged down for stretched price-to-income ratios and above-national unemployment. Forecasts are clamped to ±10–15%.",
+    "Growth score = the metro's percentile rank on the forecast. Affordability score blends price-to-income percentile (60%) with absolute price percentile (40%). Buy & hold score = 50% growth + 35% affordability + 15% rent-yield percentile.",
+    "The model is recomputed daily by a GitHub Actions workflow that pulls the sources above and commits fresh data; this page then re-checks for updates every 15 minutes. Zillow indexes update monthly and Census ACS annually, so day-to-day changes appear when upstream data changes.",
+    "Coverage this run: " + d.coverage.metros + " metros, " + d.coverage.withCensus + " matched to Census demographics, " + d.coverage.withCoords + " with map coordinates. Model version " + d.model.version + ".",
+    "Caveats: past appreciation does not guarantee future returns; metro-level indexes hide neighborhood variation; ACS figures are 5-year survey estimates; gross rent yield ignores taxes, insurance, and upkeep. This dashboard is for research, not investment advice.",
+  ];
+  for (const txt of paras) { const p = document.createElement("p"); p.textContent = txt; box.appendChild(p); }
+}
+
+/* ---------- theme ---------- */
+const THEMES = ["auto", "light", "dark"];
+function applyTheme(t) {
+  if (t === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  $("theme-btn").textContent = "Theme: " + t;
+  localStorage.setItem("re-dash-theme", t);
+  if (S.data) renderAll();
+}
+$("theme-btn").addEventListener("click", () => {
+  const cur = localStorage.getItem("re-dash-theme") || "auto";
+  applyTheme(THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length]);
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (S.data) renderAll(); });
+{
+  const saved = localStorage.getItem("re-dash-theme");
+  if (saved && saved !== "auto") document.documentElement.dataset.theme = saved;
+  document.addEventListener("DOMContentLoaded", () => { $("theme-btn").textContent = "Theme: " + (saved || "auto"); });
+}
+
+/* ---------- render all ---------- */
+let resizeT = null;
+addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (S.data) renderAll(); }, 250); });
+function renderAll() {
+  renderKPIs(); renderMap(); renderScatter(); renderBars(); renderTable(); renderDetail(); renderMeth();
+}
+loadData(true);
+</script>
+</body>
+</html>

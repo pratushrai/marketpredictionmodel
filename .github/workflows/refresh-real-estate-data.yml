@@ -1,0 +1,51 @@
+name: Refresh real estate market data
+
+on:
+  schedule:
+    # daily at 10:23 UTC (after Zillow/Census nightly updates settle)
+    - cron: "23 10 * * *"
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "pipeline/**"
+      - ".github/workflows/refresh-real-estate-data.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-real-estate-data-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build market data (stdlib only, no dependencies)
+        run: python pipeline/build_data.py
+
+      - name: Commit refreshed data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/market-data.json
+          if git diff --cached --quiet; then
+            echo "data unchanged, nothing to commit"
+            exit 0
+          fi
+          git commit -m "Refresh real estate market data"
+          for i in 1 2 3 4; do
+            git push && exit 0
+            git pull --rebase
+            sleep $((2 ** i))
+          done
+          exit 1
