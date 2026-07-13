@@ -77,6 +77,15 @@ FIXTURE_NAMES = {
 FIXTURE_DIR = os.environ.get("LOCAL_FIXTURE_DIR")
 
 
+CENSUS_KEY = os.environ.get("CENSUS_API_KEY", "").strip()
+
+
+def with_census_key(url):
+    if CENSUS_KEY and "api.census.gov" in url:
+        return url + "&key=" + CENSUS_KEY
+    return url
+
+
 def fetch_bytes(urls, fixture_key, attempts=3):
     """Return (bytes, url_used). Tries each URL with retries and backoff."""
     if FIXTURE_DIR:
@@ -84,11 +93,15 @@ def fetch_bytes(urls, fixture_key, attempts=3):
         return p.read_bytes(), str(p)
     last_err = None
     for url in urls:
+        url = with_census_key(url)
         for attempt in range(attempts):
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/json, text/csv, */*",
+                })
                 with urllib.request.urlopen(req, timeout=120) as resp:
-                    return resp.read(), url
+                    return resp.read(), resp.geturl()
             except Exception as e:  # noqa: BLE001 - record and try next
                 last_err = e
                 time.sleep(2 ** attempt)
@@ -307,13 +320,18 @@ def main():
     sources = {}
 
     def load(key, urls, parser, required=False):
+        raw = None
         try:
             raw, used = fetch_bytes(urls, key)
             parsed = parser(raw)
             sources[key] = {"ok": True, "url": used}
             return parsed
         except Exception as e:  # noqa: BLE001
-            sources[key] = {"ok": False, "error": str(e)[:300]}
+            err = str(e)[:300]
+            if raw is not None:
+                err += " | body head: " + raw[:220].decode("utf-8", errors="replace")
+            sources[key] = {"ok": False, "error": err}
+            e = RuntimeError(err)
             if required:
                 print(f"FATAL: required source {key} failed: {e}", file=sys.stderr)
                 sys.exit(1)
