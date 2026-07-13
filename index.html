@@ -640,19 +640,23 @@ $("map-metric").addEventListener("click", ev => {
 /* ---------- scatter: affordability vs forecast growth ---------- */
 function renderScatter() {
   const box = $("scatter-box"), legend = $("scatter-legend");
-  const rows = filtered().filter(m => m.pti != null && m.pred != null);
+  const withPti = filtered().filter(m => m.pti != null && m.pred != null);
+  const usePti = withPti.length >= 10;
+  const rows = usePti ? withPti : filtered().filter(m => m.zhvi != null && m.pred != null);
+  const xOf = m => usePti ? m.pti : m.zhvi / 1000;
   const W = 640, H = 400, ML = 52, MR = 16, MT = 14, MB = 42;
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;height:auto;display:block;", role: "img",
     "aria-label": "Scatter plot of price-to-income ratio versus forecast growth" });
   box.replaceChildren(svg); legend.replaceChildren();
   if (rows.length < 3) { boxNote(box, "Not enough metros in this slice to draw the chart."); return; }
 
-  const xs = rows.map(m => m.pti), ys = rows.map(m => m.pred);
+  const xs = rows.map(xOf), ys = rows.map(m => m.pred);
   const xmax = Math.min(Math.max(...xs), quantile(xs, 0.99) * 1.15);
   const xmin = Math.min(...xs) * 0.9;
   const ymin = Math.min(...ys), ymax = Math.max(...ys);
   const ypad = (ymax - ymin) * 0.08 || 0.01;
   const X = v => ML + (Math.min(v, xmax) - xmin) / (xmax - xmin) * (W - ML - MR);
+  const xTickFmt = v => usePti ? v.toFixed(0) + "\u00d7" : "$" + Math.round(v) + "K";
   const Y = v => MT + (ymax + ypad - v) / (ymax - ymin + 2*ypad) * (H - MT - MB);
 
   for (const gv of niceTicks(ymin, ymax, 5)) {
@@ -662,12 +666,13 @@ function renderScatter() {
   }
   for (const gv of niceTicks(xmin, xmax, 6)) {
     const t = el("text", { x: X(gv), y: H - MB + 18, "text-anchor": "middle", class: "tick-label" });
-    t.textContent = gv.toFixed(0) + "×"; svg.appendChild(t);
+    t.textContent = xTickFmt(gv); svg.appendChild(t);
     svg.appendChild(el("line", { x1: X(gv), x2: X(gv), y1: H - MB, y2: H - MB + 4, stroke: "var(--baseline)", "stroke-width": 1 }));
   }
   svg.appendChild(el("line", { x1: ML, x2: W - MR, y1: H - MB, y2: H - MB, stroke: "var(--baseline)", "stroke-width": 1 }));
   const xl = el("text", { x: (ML + W - MR)/2, y: H - 6, "text-anchor": "middle", class: "axis-label" });
-  xl.textContent = "Price-to-income ratio (lower = more affordable)"; svg.appendChild(xl);
+  xl.textContent = usePti ? "Price-to-income ratio (lower = more affordable)"
+    : "Typical home value (lower = cheaper) \u2014 income data unavailable this run"; svg.appendChild(xl);
   const yl = el("text", { x: 12, y: MT + 4, class: "axis-label" });
   yl.textContent = "Forecast 12-mo growth"; svg.appendChild(yl);
 
@@ -676,18 +681,18 @@ function renderScatter() {
   const pts = [];
   for (const m of rows) {
     if (topIds.has(m.id)) continue;
-    const c = el("circle", { cx: X(m.pti), cy: Y(m.pred), r: 4, fill: pal().deemph, "fill-opacity": 0.75,
+    const c = el("circle", { cx: X(xOf(m)), cy: Y(m.pred), r: 4, fill: pal().deemph, "fill-opacity": 0.75,
       stroke: "var(--surface-1)", "stroke-width": 1.5 });
-    svg.appendChild(c); pts.push({ x: X(m.pti), y: Y(m.pred), m });
+    svg.appendChild(c); pts.push({ x: X(xOf(m)), y: Y(m.pred), m });
   }
   for (const m of rows) {
     if (!topIds.has(m.id)) continue;
     const selNow = m.id === S.selectedId;
-    const c = el("circle", { cx: X(m.pti), cy: Y(m.pred), r: 5.5, fill: pal().series1,
+    const c = el("circle", { cx: X(xOf(m)), cy: Y(m.pred), r: 5.5, fill: pal().series1,
       stroke: selNow ? "var(--text-1)" : "var(--surface-1)", "stroke-width": 2 });
-    svg.appendChild(c); pts.push({ x: X(m.pti), y: Y(m.pred), m });
+    svg.appendChild(c); pts.push({ x: X(xOf(m)), y: Y(m.pred), m });
     if (labelIds.has(m.id)) {
-      const t = el("text", { x: X(m.pti) + 8, y: Y(m.pred) - 6, class: "direct-label" });
+      const t = el("text", { x: X(xOf(m)) + 8, y: Y(m.pred) - 6, class: "direct-label" });
       t.textContent = m.name.split(",")[0]; svg.appendChild(t);
     }
   }
@@ -697,7 +702,7 @@ function renderScatter() {
     if (!p) { hideTT(); return; }
     showTT(ev.clientX, ev.clientY, p.m.name, [
       ["Forecast 12-mo", fmtPct(p.m.pred)],
-      ["Price-to-income", fmtRatio(p.m.pti)],
+      [usePti ? "Price-to-income" : "Home value", usePti ? fmtRatio(p.m.pti) : fmtMoney(p.m.zhvi)],
       ["Home value", fmtMoney(p.m.zhvi)],
       ["Buy & hold score", p.m.buyHoldScore == null ? "—" : p.m.buyHoldScore.toFixed(0) + "/100"],
     ]);
