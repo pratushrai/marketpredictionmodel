@@ -32,6 +32,20 @@ Buy & hold score = 50% growth percentile + 35% affordability + 15% rent-yield
 percentile. A heuristic composite, not a trained ML model — and not
 investment advice.
 
+## Data sources & the Census API key
+
+The Census *data API* (income, price-to-income affordability, unemployment)
+now requires a free API key. Without one the pipeline still works — home
+values, rents, forecasts, coordinates, and population/growth (from the
+keyless Census Population Estimates file) all populate — but income-based
+affordability metrics stay empty.
+
+To unlock them: request a key at
+https://api.census.gov/data/key_signup.html (instant, free), then add it to
+this repo as an Actions secret named `CENSUS_API_KEY`
+(Settings → Secrets and variables → Actions → New repository secret).
+The next scheduled run picks it up automatically.
+
 ## Setup
 
 1. Push this repo, then enable **Settings → Pages → Deploy from branch →

@@ -59,6 +59,10 @@ CENSUS_PAST_URLS = [
     f"https://api.census.gov/data/2018/acs/acs5?get={CENSUS_VARS_PAST}&for={MSA_FOR}",
     f"https://api.census.gov/data/2017/acs/acs5?get={CENSUS_VARS_PAST}&for={MSA_FOR}",
 ]
+POPEST_URLS = [
+    "https://www2.census.gov/programs-surveys/popest/datasets/2020-2024/metro/totals/cbsa-est2024-alldata.csv",
+    "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/metro/totals/cbsa-est2023-alldata.csv",
+]
 GAZETTEER_URLS = [
     "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2023_Gazetteer/2023_Gaz_cbsa_national.zip",
     "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2024_Gazetteer/2024_Gaz_cbsa_national.zip",
@@ -72,6 +76,7 @@ FIXTURE_NAMES = {
     "census_now": "census_now.json",
     "census_past": "census_past.json",
     "gazetteer": "gazetteer.zip",
+    "popest": "popest.csv",
 }
 
 FIXTURE_DIR = os.environ.get("LOCAL_FIXTURE_DIR")
@@ -187,6 +192,32 @@ def parse_census(raw):
             except (TypeError, ValueError):
                 clean[k] = v
         out.append(clean)
+    return out
+
+
+def parse_popest(raw):
+    """PEP CBSA totals CSV -> {census-style name: (pop_latest, pop_growth_annualized)}."""
+    text = raw.decode("latin-1")
+    reader = csv.DictReader(io.StringIO(text))
+    out = {}
+    for row in reader:
+        lsad = (row.get("LSAD") or "").strip()
+        if lsad not in ("Metropolitan Statistical Area", "Micropolitan Statistical Area"):
+            continue
+        name = (row.get("NAME") or "").strip()
+        years = sorted(int(k[-4:]) for k in row if k.startswith("POPESTIMATE") and k[-4:].isdigit())
+        if not name or len(years) < 2:
+            continue
+        try:
+            p0 = float(row[f"POPESTIMATE{years[0]}"])
+            p1 = float(row[f"POPESTIMATE{years[-1]}"])
+        except (TypeError, ValueError):
+            continue
+        if p0 <= 0 or p1 <= 0:
+            continue
+        growth = (p1 / p0) ** (1 / (years[-1] - years[0])) - 1
+        suffix = " Metro Area" if lsad.startswith("Metropolitan") else " Micro Area"
+        out[name + suffix] = (p1, growth)
     return out
 
 
@@ -344,6 +375,7 @@ def main():
     census_now = load("census_now", CENSUS_NOW_URLS, parse_census) or []
     census_past = load("census_past", CENSUS_PAST_URLS, parse_census) or []
     gaz = load("gazetteer", GAZETTEER_URLS, parse_gazetteer) or {}
+    popest = load("popest", POPEST_URLS, parse_popest) or {}
 
     sources["zhvi"]["asof"] = zhvi[0]["series"][-1][0] if zhvi else None
 
@@ -354,6 +386,7 @@ def main():
     now_lookup = build_lookup(census_now_by_name.keys())
     past_lookup = build_lookup(census_past_by_name.keys())
     gaz_lookup = build_lookup(gaz.keys())
+    popest_lookup = build_lookup(popest.keys())
 
     metros = []
     for z in zhvi:
@@ -408,6 +441,11 @@ def main():
                 if inc0 and inc1 and inc0 > 0:
                     m["incomeGrowth"] = (inc1 / inc0) ** (1 / 5) - 1
 
+        if m.get("pop") is None:
+            pe_name = match_metro(z["city"], z["state"], popest_lookup)
+            if pe_name:
+                m["pop"], m["popGrowth"] = round(popest[pe_name][0]), popest[pe_name][1]
+
         gaz_name = match_metro(z["city"], z["state"], gaz_lookup)
         if gaz_name:
             lat, lon = gaz[gaz_name]
@@ -458,6 +496,7 @@ def main():
 
     nat["predMedian"] = median([m["pred"] for m in metros])
     matched_census = sum(1 for m in metros if m.get("income"))
+    matched_pop = sum(1 for m in metros if m.get("pop"))
     matched_coords = sum(1 for m in metros if m.get("lat"))
 
     out = {
@@ -472,6 +511,7 @@ def main():
         "coverage": {
             "metros": len(metros),
             "withCensus": matched_census,
+            "withPopulation": matched_pop,
             "withCoords": matched_coords,
         },
         "national": {k: v for k, v in nat.items() if v is not None},
