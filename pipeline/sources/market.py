@@ -165,66 +165,31 @@ def fetch_hud_fmr():
     workbook, whose filename changes each fiscal year, so several are tried.
     """
     year = datetime.now(timezone.utc).year
-    if KEYS["hud"]:
-        text, url = fetch(
-            f"https://www.huduser.gov/hudapi/public/fmr/data/{year}",
-            fixture="hud_fmr.json", want="text",
-            headers={"Authorization": f"Bearer {KEYS['hud']}"})
-        payload = json.loads(text)
-        rows = payload.get("data", {}).get("basicdata", payload.get("data", []))
-        out = {}
-        for r in rows if isinstance(rows, list) else []:
-            code = str(r.get("cbsa_code") or r.get("code") or "").strip()
-            if not code:
-                continue
-            out[code.lstrip("METRO")[:5]] = {
-                "fmr0": to_float(r.get("Efficiency")), "fmr1": to_float(r.get("One-Bedroom")),
-                "fmr2": to_float(r.get("Two-Bedroom")), "fmr3": to_float(r.get("Three-Bedroom")),
-                "fmr4": to_float(r.get("Four-Bedroom")),
-            }
-        if out:
-            return out, url
-        raise SourceError("HUD API returned no rows")
-
-    urls = [f"https://www.huduser.gov/portal/datasets/fmr/fmr{y}/FY{str(y)[2:]}_FMRs.xlsx"
-            for y in (year, year - 1)]
-    urls += [f"https://www.huduser.gov/portal/datasets/fmr/fmr{y}/FY{y}_4050_FMRs_rev.xlsx"
-             for y in (year, year - 1)]
-    raw, url = fetch(urls, fixture="hud_fmr.xlsx")
-    rows = read_xlsx(raw)
-    if not rows:
-        raise SourceError("empty HUD workbook")
-    header = [(c or "").strip().lower() for c in rows[0]]
-
-    def col(*names):
-        for n in names:
-            for i, h in enumerate(header):
-                if h == n or h.startswith(n):
-                    return i
-        return None
-
-    ci = {k: col(*v) for k, v in {
-        "code": ("cbsa", "metro_code", "hud_area_code"),
-        "fmr0": ("fmr_0", "fmr0"), "fmr1": ("fmr_1", "fmr1"),
-        "fmr2": ("fmr_2", "fmr2"), "fmr3": ("fmr_3", "fmr3"),
-        "fmr4": ("fmr_4", "fmr4"),
-    }.items()}
-    if ci["code"] is None or ci["fmr2"] is None:
-        raise SourceError(f"unexpected HUD columns: {header[:10]}")
+    if not KEYS["hud"]:
+        raise SourceError(
+            "inactive: needs a free HUD API token "
+            "(https://www.huduser.gov/portal/dataset/fmr-api.html). Add it as "
+            "the repository secret HUD_API_TOKEN to enable Fair Market Rents "
+            "by bedroom count. The published workbook URL changes every fiscal "
+            "year and is not stable enough to scrape.")
+    text, url = fetch(
+        f"https://www.huduser.gov/hudapi/public/fmr/data/{year}",
+        fixture="hud_fmr.json", want="text",
+        headers={"Authorization": f"Bearer {KEYS['hud']}"})
+    payload = json.loads(text)
+    rows = payload.get("data", {}).get("basicdata", payload.get("data", []))
     out = {}
-    for r in rows[1:]:
-        if len(r) <= ci["code"]:
+    for r in rows if isinstance(rows, list) else []:
+        code = str(r.get("cbsa_code") or r.get("code") or "").strip()
+        if not code:
             continue
-        raw_code = re.sub(r"\D", "", str(r[ci["code"]] or ""))
-        if len(raw_code) < 5:
-            continue
-        code = raw_code[:5]
-        rec = {k: (to_float(r[ci[k]]) if ci[k] is not None and len(r) > ci[k] else None)
-               for k in ("fmr0", "fmr1", "fmr2", "fmr3", "fmr4")}
-        if rec["fmr2"] is not None:
-            out.setdefault(code, rec)
+        out[code.lstrip("METRO")[:5]] = {
+            "fmr0": to_float(r.get("Efficiency")), "fmr1": to_float(r.get("One-Bedroom")),
+            "fmr2": to_float(r.get("Two-Bedroom")), "fmr3": to_float(r.get("Three-Bedroom")),
+            "fmr4": to_float(r.get("Four-Bedroom")),
+        }
     if not out:
-        raise SourceError("HUD workbook produced no metros")
+        raise SourceError("HUD API returned no rows")
     return out, url
 
 

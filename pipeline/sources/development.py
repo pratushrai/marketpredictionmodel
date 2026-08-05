@@ -25,11 +25,20 @@ from .common import (SourceError, cagr, fetch, read_csv_rows, read_zip_member,
 BPS_STRUCTURE_GROUPS = ["unit1", "unit2", "unit34", "unit5p"]
 
 
-def _bps_urls(year, monthly=False, month=12):
-    yy = str(year)[2:]
-    if monthly:
-        return [f"https://www2.census.gov/econ/bps/Metro/ma{yy}{month:02d}c.txt"]
-    return [f"https://www2.census.gov/econ/bps/Metro/ma{yy}a.txt"]
+def _bps_urls(year):
+    """Candidate BPS metro files for one year.
+
+    Census has used several naming conventions; the December year-to-date file
+    is the most reliably present and equals the annual total, so it is tried
+    alongside the explicit annual files.
+    """
+    yy, base = str(year)[2:], "https://www2.census.gov/econ/bps/Metro"
+    return [
+        f"{base}/ma{year}a.txt",      # 4-digit annual
+        f"{base}/ma{yy}a.txt",        # 2-digit annual
+        f"{base}/ma{yy}12y.txt",      # December year-to-date == annual total
+        f"{base}/ma{yy}12c.txt",      # December cumulative
+    ]
 
 
 def fetch_permits(years_back=6):
@@ -136,7 +145,11 @@ def _looks_numeric(line, idx):
 
 NRI_URLS = [
     "https://hazards.fema.gov/nri/Content/StaticDocuments/DataDownload/NRI_Table_Counties/NRI_Table_Counties.zip",
+    "https://hazards.fema.gov/nri/Content/StaticDocuments/DataDownload/NRI_Table_CensusTracts/NRI_Table_CensusTracts.zip",
 ]
+# FEMA's CDN rejects non-browser user agents with a 403.
+BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, "
+              "like Gecko) Chrome/126.0 Safari/537.36")
 
 
 def fetch_hazard_risk(county_to_cbsa):
@@ -144,7 +157,8 @@ def fetch_hazard_risk(county_to_cbsa):
 
     Returns {cbsa: {hazardRisk 0-100, hazardEAL $/yr, communityResilience}}.
     """
-    raw, url = fetch(NRI_URLS, fixture="fema_nri.zip")
+    raw, url = fetch(NRI_URLS, fixture="fema_nri.zip",
+                     headers={"User-Agent": BROWSER_UA})
     text = read_zip_member(raw, suffix=(".csv",))
     agg = {}
     for row in read_csv_rows(text):
