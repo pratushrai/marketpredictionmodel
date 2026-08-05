@@ -192,6 +192,15 @@ def write_qcew(out):
                 csv.writer(f).writerows(rows)
 
 
+def write_bps_root(out):
+    """Survey-root listing, used when the metro directory has moved."""
+    dirs = ["County/", "Metro/", "Place/", "State/", "Documentation/"]
+    rows = "".join(f'<tr><td><a href="{d}">{d}</a></td></tr>' for d in dirs)
+    (out / "bps_root.html").write_text(
+        f"<html><body><h1>Index of /econ/bps</h1><table>"
+        f'<tr><td><a href="../">Parent Directory</a></td></tr>{rows}</table></body></html>')
+
+
 def write_bps_index(out):
     """Apache-style directory index, mirroring the mixed naming Census uses."""
     names = ["ma2024a.txt", "ma23a.txt", "ma2212y.txt", "ma2112y.txt",
@@ -357,6 +366,7 @@ def main():
     write_hud(out)
     write_acs(out)
     write_qcew(out)
+    write_bps_root(out)
     write_bps_index(out)
     write_bps(out)
     write_fema(out)

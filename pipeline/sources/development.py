@@ -26,7 +26,11 @@ from .common import (SourceError, cagr, fetch, read_csv_rows, read_zip_member,
 BPS_STRUCTURE_GROUPS = ["unit1", "unit2", "unit34", "unit5p"]
 
 
-BPS_INDEX = "https://www2.census.gov/econ/bps/Metro/"
+BPS_ROOT = "https://www2.census.gov/econ/bps/"
+BPS_INDEX_CANDIDATES = [
+    BPS_ROOT + "Metro/", BPS_ROOT + "metro/", BPS_ROOT + "MSA/", BPS_ROOT + "msa/",
+]
+_HREF_DIR = re.compile(r'href="([^"?#/][^"?#]*/)"', re.I)
 
 # Census has published these under several conventions; parse each explicitly
 # rather than with one loose pattern, because "ma2012c.txt" is December 2020,
@@ -44,15 +48,49 @@ def _yy_to_year(yy):
     return 2000 + yy if yy < 90 else 1900 + yy
 
 
-def discover_bps_files():
-    """List the BPS metro directory and return candidate files, newest first.
+def _find_bps_index():
+    """Locate the BPS metro directory, returning (index_url, listing_text).
 
-    The directory index is the source of truth: guessing the filename pattern
-    is what broke this source in production. December year-to-date files count
-    as annual totals and are used when no explicit annual file exists.
-    Returns [(year, url)] with the best file per year.
+    Both the directory path and the filenames inside it have moved before, so
+    nothing here is hardcoded beyond the survey root: try the known spellings,
+    and if none answer, read the root listing and follow whichever
+    subdirectory looks metro-level.
     """
-    text, _ = fetch(BPS_INDEX, fixture="bps_index.html", want="text", attempts=2)
+    seen = []
+    for url in BPS_INDEX_CANDIDATES:
+        try:
+            text, got = fetch(url, fixture="bps_index.html", want="text", attempts=1)
+            return got if got.endswith("/") else url, text
+        except SourceError as e:
+            seen.append(f"{url} -> {str(e)[:50]}")
+
+    root_text, _ = fetch(BPS_ROOT, fixture="bps_root.html", want="text", attempts=2)
+    subdirs = [d for d in dict.fromkeys(_HREF_DIR.findall(root_text))
+               if not d.startswith("..")]
+    for d in subdirs:
+        if any(tag in d.lower() for tag in ("metro", "msa", "cbsa")):
+            url = BPS_ROOT + d
+            try:
+                text, _ = fetch(url, fixture="bps_index.html", want="text", attempts=1)
+                return url, text
+            except SourceError as e:
+                seen.append(f"{url} -> {str(e)[:50]}")
+    # Nothing matched: report what the server actually offers, so the next run
+    # is fixed from evidence rather than another guess.
+    raise SourceError("no metro directory under " + BPS_ROOT
+                      + "; subdirectories present: " + ", ".join(subdirs[:12])
+                      + " | tried: " + "; ".join(seen[:3]))
+
+
+def discover_bps_files():
+    """Return BPS metro files as [(year, url)], newest first, best per year.
+
+    Guessing filenames is what broke this source in production, so both the
+    directory and the files inside it are discovered from live listings.
+    December year-to-date files count as annual totals when no explicit annual
+    file exists.
+    """
+    index_url, text = _find_bps_index()
     best = {}
     for pattern, kind in _BPS_PATTERNS:
         for match in pattern.findall(text):
@@ -69,7 +107,11 @@ def discover_bps_files():
                 continue
             prev = best.get(year)
             if prev is None or rank < prev[0]:
-                best[year] = (rank, BPS_INDEX + name)
+                best[year] = (rank, index_url + name)
+    if not best:
+        raise SourceError(
+            f"BPS index at {index_url} listed no recognisable metro files; "
+            f"first 200 chars: {' '.join(text[:200].split())}")
     return [(y, url) for y, (_r, url) in sorted(best.items(), reverse=True)]
 
 
@@ -81,9 +123,6 @@ def fetch_permits(years_back=6):
     *velocity* (not just level) can be scored.
     """
     candidates = discover_bps_files()
-    if not candidates:
-        raise SourceError(f"no BPS metro files listed at {BPS_INDEX}")
-
     by_year, used, tried = {}, [], []
     for year, url in candidates[:years_back]:
         try:
