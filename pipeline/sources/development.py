@@ -16,6 +16,7 @@ Three layers, coarse to fine:
 import json
 import os
 import re
+from urllib.parse import quote
 from datetime import datetime, timedelta, timezone
 
 from .common import (SourceError, cagr, fetch, read_csv_rows, read_zip_member,
@@ -32,20 +33,41 @@ BPS_INDEX_CANDIDATES = [
 ]
 _HREF_DIR = re.compile(r'href="([^"?#/][^"?#]*/)"', re.I)
 
-# Census has published these under several conventions; parse each explicitly
-# rather than with one loose pattern, because "ma2012c.txt" is December 2020,
-# not the year 2012.
-_BPS_PATTERNS = [
-    (re.compile(r'href="(ma(\d{4})a\.txt)"', re.I), "annual4"),
-    (re.compile(r'href="(ma(\d{2})a\.txt)"', re.I), "annual2"),
-    (re.compile(r'href="(ma(\d{2})(\d{2})([yc])\.txt)"', re.I), "monthly"),
-]
+# Census renames both the directory and the file prefix over time (the metro
+# files moved to "CBSA (beginning Jan 2024)/"), so the alphabetic prefix is not
+# assumed — only the digits, which encode the period, are interpreted.
+_BPS_TXT = re.compile(r'href="([A-Za-z]{1,4}(\d{2,6})([A-Za-z])?\.txt)"', re.I)
 _BPS_RANK = {"annual4": 0, "annual2": 1, "y": 2, "c": 3}
 
 
 def _yy_to_year(yy):
     yy = int(yy)
     return 2000 + yy if yy < 90 else 1900 + yy
+
+
+def _classify_bps(digits, suffix):
+    """Map a BPS filename's digits + suffix to (year, rank), or None.
+
+    Handles ma2024a / ma23a / ma2212y / cb2412c and the 6-digit YYYYMM form.
+    Only December (or an explicit annual file) represents a full year.
+    """
+    suffix = (suffix or "").lower()
+    n = len(digits)
+    if n == 4 and suffix == "a":
+        return int(digits), _BPS_RANK["annual4"]
+    if n == 2 and suffix == "a":
+        return _yy_to_year(digits), _BPS_RANK["annual2"]
+    if n == 4 and suffix in ("y", "c"):
+        year, month = digits[:2], digits[2:]
+        if month != "12":
+            return None
+        return _yy_to_year(year), _BPS_RANK[suffix]
+    if n == 6 and suffix in ("y", "c", ""):
+        year, month = digits[:4], digits[4:]
+        if month != "12":
+            return None
+        return int(year), _BPS_RANK.get(suffix, 3)
+    return None
 
 
 def _find_bps_index():
@@ -91,27 +113,22 @@ def discover_bps_files():
     file exists.
     """
     index_url, text = _find_bps_index()
-    best = {}
-    for pattern, kind in _BPS_PATTERNS:
-        for match in pattern.findall(text):
-            name, digits = match[0], match[1]
-            if kind == "monthly":
-                month, suffix = match[2], match[3].lower()
-                if month != "12":          # only a full year is comparable
-                    continue
-                year, rank = _yy_to_year(digits), _BPS_RANK[suffix]
-            else:
-                year = int(digits) if kind == "annual4" else _yy_to_year(digits)
-                rank = _BPS_RANK[kind]
-            if not (1990 <= year <= 2100):
-                continue
-            prev = best.get(year)
-            if prev is None or rank < prev[0]:
-                best[year] = (rank, index_url + name)
+    best, names = {}, []
+    for name, digits, suffix in _BPS_TXT.findall(text):
+        names.append(name)
+        hit = _classify_bps(digits, suffix)
+        if not hit:
+            continue
+        year, rank = hit
+        if not (1990 <= year <= 2100):
+            continue
+        prev = best.get(year)
+        if prev is None or rank < prev[0]:
+            best[year] = (rank, index_url + quote(name))
     if not best:
         raise SourceError(
-            f"BPS index at {index_url} listed no recognisable metro files; "
-            f"first 200 chars: {' '.join(text[:200].split())}")
+            f"BPS index at {index_url} listed no usable period files. "
+            f"Files present: {', '.join(names[:15]) or '(no .txt links found)'}")
     return [(y, url) for y, (_r, url) in sorted(best.items(), reverse=True)]
 
 

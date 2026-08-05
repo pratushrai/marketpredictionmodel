@@ -194,7 +194,10 @@ def write_qcew(out):
 
 def write_bps_root(out):
     """Survey-root listing, used when the metro directory has moved."""
-    dirs = ["County/", "Metro/", "Place/", "State/", "Documentation/"]
+    # mirrors the real listing, where the metro files live under a renamed,
+    # space-containing directory
+    dirs = ["County/", "CBSA (beginning Jan 2024)/", "Place/", "State/",
+            "Documentation/"]
     rows = "".join(f'<tr><td><a href="{d}">{d}</a></td></tr>' for d in dirs)
     (out / "bps_root.html").write_text(
         f"<html><body><h1>Index of /econ/bps</h1><table>"
@@ -203,8 +206,9 @@ def write_bps_root(out):
 
 def write_bps_index(out):
     """Apache-style directory index, mirroring the mixed naming Census uses."""
-    names = ["ma2024a.txt", "ma23a.txt", "ma2212y.txt", "ma2112y.txt",
-             "ma2012c.txt", "ma2501c.txt", "readme.txt"]
+    # prefix differs by vintage (ma... then cb...); only the digits matter
+    names = ["cb2024a.txt", "cb23a.txt", "ma2212y.txt", "ma2112y.txt",
+             "ma2012c.txt", "cb2501c.txt", "readme.txt"]
     rows = "\n".join(
         f'<tr><td><a href="{n}">{n}</a></td><td>2025-03-01 08:14</td></tr>'
         for n in names)
