@@ -13,6 +13,8 @@ Three layers, coarse to fine:
      endpoint marks only itself unavailable.
 """
 
+import csv
+import io
 import json
 import os
 import re
@@ -150,7 +152,9 @@ def fetch_permits(years_back=6):
             continue
         parsed = _parse_bps(text)
         if not parsed:
-            tried.append(f"{year}: parsed 0 rows")
+            head = " | ".join(ln[:90] for ln in text.splitlines()[:3])
+            tried.append(f"{year}: parsed 0 rows from {url.rsplit('/', 1)[-1]}; "
+                         f"first lines: {head}")
             continue
         if not by_year:
             used.append(got)
@@ -184,52 +188,66 @@ def fetch_permits(years_back=6):
 
 
 def _parse_bps(text):
-    """Parse a BPS metro file (two-row header, then CSV) -> {cbsa: groups}."""
-    lines = [ln for ln in text.splitlines() if ln.strip()]
-    if len(lines) < 3:
-        return {}
-    header_row = next((i for i, ln in enumerate(lines[:8])
-                       if "CBSA" in ln.upper() and "NAME" in ln.upper()), None)
-    if header_row is None:
-        return {}
-    cols = [c.strip().strip('"') for c in lines[header_row].split(",")]
-    upper = [c.upper() for c in cols]
-    try:
-        cbsa_i = next(i for i, c in enumerate(upper) if c == "CBSA")
-        name_i = next(i for i, c in enumerate(upper) if c == "NAME")
-    except StopIteration:
+    """Parse a BPS metro/CBSA file -> {cbsa: {group: {bldgs, units}}}.
+
+    Header wording and column order have both changed across vintages, so the
+    columns are located from the data rather than from the header: the CBSA
+    column is whichever one holds 5-digit codes on most rows, the name column
+    is the last non-numeric one, and the numeric triplets after it are
+    (buildings, units, value) for 1-unit / 2-unit / 3-4 unit / 5+ unit, in that
+    published order. A real CSV reader is required because metro names contain
+    commas ("Akron, OH").
+    """
+    rows = [r for r in csv.reader(io.StringIO(text)) if len(r) >= 8]
+    if not rows:
         return {}
 
-    # After Name, the file repeats (Bldgs, Units, Value) for 1-unit, 2-units,
-    # 3-4 units and 5+ units. Data rows begin after the second header line.
-    start = header_row + 1
-    while start < len(lines) and not _looks_numeric(lines[start], cbsa_i):
-        start += 1
+    def is_cbsa(v):
+        v = (v or "").strip()
+        return len(v) == 5 and v.isdigit()
+
+    def is_num(v):
+        v = (v or "").strip().replace(",", "")
+        if not v:
+            return False
+        try:
+            float(v)
+            return True
+        except ValueError:
+            return False
+
+    # The CBSA column: the one holding 5-digit codes most often.
+    width = max(len(r) for r in rows)
+    hits = [sum(1 for r in rows if i < len(r) and is_cbsa(r[i])) for i in range(width)]
+    cbsa_i = max(range(width), key=lambda i: hits[i])
+    if hits[cbsa_i] < 3:
+        return {}
+
+    data = [r for r in rows if cbsa_i < len(r) and is_cbsa(r[cbsa_i])]
+    if not data:
+        return {}
+
+    # The name column: the last column that is text on most data rows.
+    text_cols = [i for i in range(width)
+                 if sum(1 for r in data if i < len(r) and r[i].strip()
+                        and not is_num(r[i])) > len(data) * 0.6]
+    name_i = max([i for i in text_cols if i >= cbsa_i] or [cbsa_i])
 
     out = {}
-    for ln in lines[start:]:
-        parts = [p.strip().strip('"') for p in ln.split(",")]
-        if len(parts) <= name_i + 12:
-            continue
-        code = parts[cbsa_i].strip()
-        if not code.isdigit():
-            continue
-        code = code.zfill(5)
-        vals = parts[name_i + 1:]
+    for r in data:
+        vals = [v for v in r[name_i + 1:]]
         groups = {}
         for gi, g in enumerate(BPS_STRUCTURE_GROUPS):
             base = gi * 3
             if base + 1 >= len(vals):
                 break
-            groups[g] = {"bldgs": to_float(vals[base]), "units": to_float(vals[base + 1])}
+            bldgs, units = to_float(vals[base]), to_float(vals[base + 1])
+            if units is None:
+                continue
+            groups[g] = {"bldgs": bldgs, "units": units}
         if groups:
-            out[code] = groups
+            out[r[cbsa_i].strip().zfill(5)] = groups
     return out
-
-
-def _looks_numeric(line, idx):
-    parts = [p.strip().strip('"') for p in line.split(",")]
-    return len(parts) > idx and parts[idx].isdigit()
 
 
 # ------------------------------------------------------------- FEMA NRI ---
