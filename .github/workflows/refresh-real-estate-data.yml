@@ -32,8 +32,17 @@ jobs:
 
       - name: Build market data (stdlib only, no dependencies)
         env:
+          # All optional. Each missing key disables exactly one source and is
+          # reported on the dashboard; the run still succeeds.
           CENSUS_API_KEY: ${{ secrets.CENSUS_API_KEY }}
+          BEA_API_KEY: ${{ secrets.BEA_API_KEY }}
+          HUD_API_TOKEN: ${{ secrets.HUD_API_TOKEN }}
+          SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+          MLS_RESO_BASE_URL: ${{ secrets.MLS_RESO_BASE_URL }}
+          MLS_RESO_TOKEN: ${{ secrets.MLS_RESO_TOKEN }}
+          MLS_RESO_FILTER: ${{ secrets.MLS_RESO_FILTER }}
         run: python pipeline/build_data.py
+        timeout-minutes: 45
 
       - name: Commit refreshed data
         run: |
