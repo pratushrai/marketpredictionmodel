@@ -192,6 +192,18 @@ def write_qcew(out):
                 csv.writer(f).writerows(rows)
 
 
+def write_bps_index(out):
+    """Apache-style directory index, mirroring the mixed naming Census uses."""
+    names = ["ma2024a.txt", "ma23a.txt", "ma2212y.txt", "ma2112y.txt",
+             "ma2012c.txt", "ma2501c.txt", "readme.txt"]
+    rows = "\n".join(
+        f'<tr><td><a href="{n}">{n}</a></td><td>2025-03-01 08:14</td></tr>'
+        for n in names)
+    (out / "bps_index.html").write_text(
+        f"<html><head><title>Index of /econ/bps/Metro</title></head>"
+        f"<body><h1>Index of /econ/bps/Metro</h1><table>{rows}</table></body></html>")
+
+
 def write_bps(out):
     """Census BPS metro file: two header rows, then CBSA rows."""
     for tag in ("cur", "2023", "2022", "2021", "2020"):
@@ -345,6 +357,7 @@ def main():
     write_hud(out)
     write_acs(out)
     write_qcew(out)
+    write_bps_index(out)
     write_bps(out)
     write_fema(out)
     write_delineation(out)

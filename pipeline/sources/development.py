@@ -15,6 +15,7 @@ Three layers, coarse to fine:
 
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from .common import (SourceError, cagr, fetch, read_csv_rows, read_zip_member,
@@ -25,20 +26,51 @@ from .common import (SourceError, cagr, fetch, read_csv_rows, read_zip_member,
 BPS_STRUCTURE_GROUPS = ["unit1", "unit2", "unit34", "unit5p"]
 
 
-def _bps_urls(year):
-    """Candidate BPS metro files for one year.
+BPS_INDEX = "https://www2.census.gov/econ/bps/Metro/"
 
-    Census has used several naming conventions; the December year-to-date file
-    is the most reliably present and equals the annual total, so it is tried
-    alongside the explicit annual files.
+# Census has published these under several conventions; parse each explicitly
+# rather than with one loose pattern, because "ma2012c.txt" is December 2020,
+# not the year 2012.
+_BPS_PATTERNS = [
+    (re.compile(r'href="(ma(\d{4})a\.txt)"', re.I), "annual4"),
+    (re.compile(r'href="(ma(\d{2})a\.txt)"', re.I), "annual2"),
+    (re.compile(r'href="(ma(\d{2})(\d{2})([yc])\.txt)"', re.I), "monthly"),
+]
+_BPS_RANK = {"annual4": 0, "annual2": 1, "y": 2, "c": 3}
+
+
+def _yy_to_year(yy):
+    yy = int(yy)
+    return 2000 + yy if yy < 90 else 1900 + yy
+
+
+def discover_bps_files():
+    """List the BPS metro directory and return candidate files, newest first.
+
+    The directory index is the source of truth: guessing the filename pattern
+    is what broke this source in production. December year-to-date files count
+    as annual totals and are used when no explicit annual file exists.
+    Returns [(year, url)] with the best file per year.
     """
-    yy, base = str(year)[2:], "https://www2.census.gov/econ/bps/Metro"
-    return [
-        f"{base}/ma{year}a.txt",      # 4-digit annual
-        f"{base}/ma{yy}a.txt",        # 2-digit annual
-        f"{base}/ma{yy}12y.txt",      # December year-to-date == annual total
-        f"{base}/ma{yy}12c.txt",      # December cumulative
-    ]
+    text, _ = fetch(BPS_INDEX, fixture="bps_index.html", want="text", attempts=2)
+    best = {}
+    for pattern, kind in _BPS_PATTERNS:
+        for match in pattern.findall(text):
+            name, digits = match[0], match[1]
+            if kind == "monthly":
+                month, suffix = match[2], match[3].lower()
+                if month != "12":          # only a full year is comparable
+                    continue
+                year, rank = _yy_to_year(digits), _BPS_RANK[suffix]
+            else:
+                year = int(digits) if kind == "annual4" else _yy_to_year(digits)
+                rank = _BPS_RANK[kind]
+            if not (1990 <= year <= 2100):
+                continue
+            prev = best.get(year)
+            if prev is None or rank < prev[0]:
+                best[year] = (rank, BPS_INDEX + name)
+    return [(y, url) for y, (_r, url) in sorted(best.items(), reverse=True)]
 
 
 def fetch_permits(years_back=6):
@@ -48,27 +80,30 @@ def fetch_permits(years_back=6):
     Annual files are used for the latest complete year plus lags, so permit
     *velocity* (not just level) can be scored.
     """
-    now = datetime.now(timezone.utc).year
-    base_year, by_year, used = None, {}, []
+    candidates = discover_bps_files()
+    if not candidates:
+        raise SourceError(f"no BPS metro files listed at {BPS_INDEX}")
 
-    for year in range(now, now - years_back, -1):
+    by_year, used, tried = {}, [], []
+    for year, url in candidates[:years_back]:
         try:
-            text, url = fetch(_bps_urls(year), fixture=f"bps_{'cur' if base_year is None else year}.txt",
+            text, got = fetch(url, fixture=f"bps_{'cur' if not by_year else year}.txt",
                               want="text", attempts=2)
-        except SourceError:
+        except SourceError as e:
+            tried.append(f"{year}: {str(e)[:60]}")
             continue
         parsed = _parse_bps(text)
         if not parsed:
+            tried.append(f"{year}: parsed 0 rows")
             continue
-        if base_year is None:
-            base_year, = (year,)
-            used.append(url)
+        if not by_year:
+            used.append(got)
         by_year[year] = parsed
         if len(by_year) >= 5:
             break
 
     if not by_year:
-        raise SourceError(f"BPS unavailable for {now-years_back+1}..{now}")
+        raise SourceError("BPS files listed but none parsed: " + "; ".join(tried[:4]))
 
     years = sorted(by_year, reverse=True)
     latest, lag1 = years[0], years[1] if len(years) > 1 else None
@@ -157,8 +192,19 @@ def fetch_hazard_risk(county_to_cbsa):
 
     Returns {cbsa: {hazardRisk 0-100, hazardEAL $/yr, communityResilience}}.
     """
-    raw, url = fetch(NRI_URLS, fixture="fema_nri.zip",
-                     headers={"User-Agent": BROWSER_UA})
+    try:
+        raw, url = fetch(NRI_URLS, fixture="fema_nri.zip",
+                         headers={"User-Agent": BROWSER_UA,
+                                  "Accept": "application/zip,*/*",
+                                  "Referer": "https://hazards.fema.gov/nri/data-resources"})
+    except SourceError as e:
+        if "403" in str(e):
+            raise SourceError(
+                "blocked upstream: FEMA's CDN returns 403 to automated and "
+                "datacenter requests, so hazard risk cannot be fetched from CI. "
+                "Every other input is unaffected — the model simply drops the "
+                "hazard term for this run.") from e
+        raise
     text = read_zip_member(raw, suffix=(".csv",))
     agg = {}
     for row in read_csv_rows(text):
