@@ -135,6 +135,8 @@ table.rank tbody tr.sel { background: color-mix(in srgb, var(--series-1) 12%, va
 .src-pill.ok::before { content: "✓ "; color: var(--up-good); font-weight: 700; }
 .src-pill.bad::before { content: "✕ "; color: var(--down-bad); font-weight: 700; }
 .src-pill.key::before { content: "◷ "; color: var(--text-2); font-weight: 700; }
+.src-pill.stale::before { content: "⟳ "; color: var(--down-bad); font-weight: 700; }
+.src-pill.stale { border-color: var(--down-bad); }
 .meth p { margin: 8px 0; color: var(--text-2); font-size: 13px; max-width: 88ch; }
 .meth h3 { font-size: 13px; font-weight: 600; margin: 16px 0 2px; color: var(--text-1); }
 .meth table { border-collapse: collapse; font-size: 12.5px; margin: 8px 0; width: 100%; }
@@ -1051,17 +1053,35 @@ function renderMeth() {
   for (const [k, s] of Object.entries(d.sources)) {
     const p = document.createElement("span");
     const needsKey = s.state === "needs credentials";
-    p.className = "src-pill " + (s.ok ? "ok" : needsKey ? "key" : "bad");
+    const stale = s.state === "stale";
+    p.className = "src-pill " + (s.ok ? "ok" : stale ? "stale" : needsKey ? "key" : "bad");
     let txt = s.label || k;
     if (s.asof) txt += " · " + s.asof;
     else if (s.year) txt += " · " + s.year;
     if (s.portalsLive != null) txt += " · " + s.portalsLive + "/" + s.portalsTotal + " portals";
-    if (!s.ok) txt += needsKey ? " (awaiting credential)" : " (unavailable)";
+    if (!s.ok) {
+      if (stale) {
+        const hrs = s.carriedAgeHours;
+        txt += " (upstream down — using values from " +
+          (hrs != null ? (hrs < 48 ? Math.round(hrs) + "h ago" : Math.round(hrs / 24) + "d ago")
+                       : "the last good run") + ")";
+      } else txt += needsKey ? " (awaiting credential)" : " (unavailable)";
+    }
     p.textContent = txt;
     p.title = s.error || s.url || "";
     pills.appendChild(p);
   }
   box.appendChild(pills);
+
+  const staleSrc = Object.entries(d.sources).filter(([, s]) => s.state === "stale");
+  if (staleSrc.length) {
+    para(box, "Marked ⟳: the upstream provider did not respond on this run, so those "
+      + "values were carried forward from the last successful run rather than left "
+      + "blank — a single agency outage would otherwise empty most of the dashboard. "
+      + "They are shown as-is with their age; anything older than 45 days is dropped "
+      + "instead of carried. Affected: "
+      + staleSrc.map(([, s]) => s.label).join(", ") + ".");
+  }
 
   const inactive = Object.values(d.sources).filter(s => s.state === "needs credentials");
   if (inactive.length) {

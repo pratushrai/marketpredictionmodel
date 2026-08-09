@@ -53,6 +53,7 @@ def fetch_qcew(years_back=4):
     base_year = None
     data = {}
     used_urls = []
+    failures = []
 
     for sector, (code, _label) in SECTORS.items():
         # Establish which year is available using the first sector, then reuse.
@@ -66,10 +67,12 @@ def fetch_qcew(years_back=4):
                 text, url = fetch(QCEW_ANNUAL.format(year=year, code=code),
                                   fixture=f"qcew_{sector}_{'cur' if year == base_year or base_year is None else year}.csv",
                                   want="text", attempts=2)
-            except SourceError:
+            except SourceError as e:
+                failures.append(f"{sector}/{year}: {str(e)[:70]}")
                 continue
             rows = _parse_qcew(text)
             if not rows:
+                failures.append(f"{sector}/{year}: downloaded but parsed 0 MSA rows")
                 continue
             base_year = base_year or year
             used_urls.append(url)
@@ -79,7 +82,9 @@ def fetch_qcew(years_back=4):
             got = True
             break
         if not got and base_year is None:
-            raise SourceError(f"QCEW unavailable for any year {now_year-1}..{now_year-years_back-1}")
+            raise SourceError(
+                f"QCEW unavailable for any year {now_year-1}..{now_year-years_back-1}. "
+                + " | ".join(failures[:4]))
 
     # Lagged years for growth rates.
     for lag, tag in ((1, "p1"), (3, "p3")):

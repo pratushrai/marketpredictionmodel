@@ -12,8 +12,9 @@ dashboard rather than breaking it.
     LOCAL_FIXTURE_DIR=... python pipeline/build_data.py    # offline test
 """
 
+import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -51,6 +52,86 @@ SOURCE_LABELS = {
     "local_portals": "Regional & municipal permit portals",
     "policy": "State policy & political risk (curated)",
 }
+
+
+# When a source fails, the fields it owns are carried forward from the last
+# good run rather than left empty. A single upstream outage would otherwise
+# blank most of the dashboard — losing BLS, for example, drops the demand
+# driver behind ten of the eleven asset classes.
+CARRY_FORWARD = {
+    "qcew": ["sectors", "empGrowth", "empGrowth3a", "employment", "avgWage"],
+    "permits": ["permitYear", "permitUnits", "permits_unit1", "permits_unit2",
+                "permits_unit34", "permits_unit5p", "permitGrowth1", "permitGrowth3a"],
+    "fhfa": ["fhfaIndex", "fhfaG1", "fhfaG5a", "fhfaAsof"],
+    "acs": ["income", "medianGrossRent", "censusHomeValue", "medianAge",
+            "unemployment", "renterShare", "households", "housingUnits",
+            "stockSingleFamily", "stockTownhome", "stockSmallMulti",
+            "stockApartment", "incomeGrowth"],
+    "bea_gdp": ["gdp", "gdpGrowth"],
+    "hazard": ["hazardRisk", "hazardEAL", "communityResilience"],
+    "hud_fmr": ["fmr1br", "fmr2br", "fmr3br"],
+    "population": ["pop", "popGrowth", "popGrowth1"],
+    "gazetteer": ["lat", "lon"],
+}
+# Beyond this the values are too old to stand in for live data.
+MAX_CARRY_DAYS = 45
+
+
+def load_previous():
+    """Last committed run, used to carry values through an upstream outage."""
+    if not OUT_PATH.exists():
+        return None
+    try:
+        return json.loads(OUT_PATH.read_text())
+    except (ValueError, OSError):
+        return None
+
+
+def carry_forward(previous, metros, status):
+    """Restore fields owned by failed sources from the previous run.
+
+    Only fills gaps — never overwrites a value the current run produced — and
+    records the age so the dashboard can label the source as stale rather than
+    presenting old numbers as fresh.
+    """
+    if not previous:
+        return
+    try:
+        stamp = datetime.strptime(previous.get("generatedAt", ""),
+                                  "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return
+    age = datetime.now(timezone.utc) - stamp
+    if age > timedelta(days=MAX_CARRY_DAYS):
+        return
+    prev_by_id = {m.get("id"): m for m in previous.get("metros", [])}
+    prev_sources = previous.get("sources", {})
+
+    for name, fields in CARRY_FORWARD.items():
+        entry = status.get(name)
+        if not entry or entry.get("ok"):
+            continue
+        # Nothing to carry if the source was not working last time either.
+        if not (prev_sources.get(name) or {}).get("ok"):
+            continue
+        filled = 0
+        for m in metros:
+            prev = prev_by_id.get(m.get("id"))
+            if not prev:
+                continue
+            touched = False
+            for f in fields:
+                if m.get(f) is None and prev.get(f) is not None:
+                    m[f] = prev[f]
+                    touched = True
+            filled += 1 if touched else 0
+        if filled:
+            entry["state"] = "stale"
+            entry["carriedFrom"] = previous["generatedAt"]
+            entry["carriedAgeHours"] = round(age.total_seconds() / 3600, 1)
+            entry["metrosCarried"] = filled
+            print(f"note: {name} failed; carried {filled} metros forward from "
+                  f"{previous['generatedAt']}", file=sys.stderr)
 
 
 class Runner:
@@ -128,6 +209,7 @@ def r(v, places=4):
 
 def main():
     run = Runner()
+    previous = load_previous()
 
     # --- spine: Zillow metro list ---------------------------------------
     zhvi = run.run("zhvi", market.fetch_zillow, required=True, kind="zhvi")
@@ -282,6 +364,9 @@ def main():
     run.status["policy"] = {"ok": policy_hits > 0, "label": SOURCE_LABELS["policy"],
                             "metrosMatched": policy_hits, **policy.meta()}
 
+    # --- carry forward anything a failed source would have supplied -------
+    carry_forward(previous, metros, run.status)
+
     # --- derived ratios ---------------------------------------------------
     for m in metros:
         if m.get("income"):
@@ -294,6 +379,8 @@ def main():
         m["highGrowth"] = bool(m.get("popGrowth") is not None and m["popGrowth"] >= 0.02)
 
     # --- scoring ----------------------------------------------------------
+    # Carried-forward sectors arrive already trimmed to growth rates, which is
+    # exactly what the scorer reads, so no re-flattening is needed here.
     nat = model.national_baselines(metros)
     for m in metros:
         m["pred"] = model.forecast_growth(m, nat)
@@ -345,6 +432,8 @@ def main():
         "withFhfa": sum(1 for m in metros if m.get("fhfaIndex") is not None),
         "withPolicy": sum(1 for m in metros if m.get("politicalRisk") is not None),
         "withLocalPortal": sum(1 for m in metros if m.get("localPermits")),
+        "staleSources": sorted(k for k, v in run.status.items()
+                               if v.get("state") == "stale"),
         "highGrowth2pct": sum(1 for m in metros if m.get("highGrowth")),
     }
 
