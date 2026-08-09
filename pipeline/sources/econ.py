@@ -8,6 +8,8 @@ what makes per-asset-class scoring possible — warehouse demand tracks NAICS
 """
 
 import json
+import sys
+import time
 from datetime import datetime, timezone
 
 from .common import KEYS, SourceError, cagr, fetch, read_csv_rows, to_float
@@ -31,6 +33,10 @@ SECTORS = {
 }
 
 QCEW_ANNUAL = "https://data.bls.gov/cew/data/api/{year}/a/industry/{code}.csv"
+# Seconds between BLS requests. Thirteen sectors across three years is ~39
+# calls; fired back-to-back, everything after the first sector was being
+# rejected, which left the commercial asset classes unscored.
+REQUEST_SPACING = 1.5
 
 
 def _qcew_cbsa(area_fips):
@@ -54,6 +60,7 @@ def fetch_qcew(years_back=4):
     data = {}
     used_urls = []
     failures = []
+    loaded = []
 
     for sector, (code, _label) in SECTORS.items():
         # Establish which year is available using the first sector, then reuse.
@@ -66,7 +73,7 @@ def fetch_qcew(years_back=4):
             try:
                 text, url = fetch(QCEW_ANNUAL.format(year=year, code=code),
                                   fixture=f"qcew_{sector}_{'cur' if year == base_year or base_year is None else year}.csv",
-                                  want="text", attempts=2)
+                                  want="text", attempts=3)
             except SourceError as e:
                 failures.append(f"{sector}/{year}: {str(e)[:70]}")
                 continue
@@ -81,10 +88,15 @@ def fetch_qcew(years_back=4):
                     {"emp": rec["emp"], "estabs": rec["estabs"], "wage": rec["wage"]})
             got = True
             break
-        if not got and base_year is None:
+        if got:
+            loaded.append(sector)
+        elif base_year is None:
             raise SourceError(
                 f"QCEW unavailable for any year {now_year-1}..{now_year-years_back-1}. "
                 + " | ".join(failures[:4]))
+        # BLS throttles rapid sequential requests; pace them so sectors after
+        # the first are not silently dropped.
+        time.sleep(REQUEST_SPACING)
 
     # Lagged years for growth rates.
     for lag, tag in ((1, "p1"), (3, "p3")):
@@ -92,9 +104,12 @@ def fetch_qcew(years_back=4):
         for sector, (code, _label) in SECTORS.items():
             try:
                 text, _ = fetch(QCEW_ANNUAL.format(year=year, code=code),
-                                fixture=f"qcew_{sector}_{tag}.csv", want="text", attempts=2)
-            except SourceError:
+                                fixture=f"qcew_{sector}_{tag}.csv", want="text", attempts=3)
+            except SourceError as e:
+                failures.append(f"{sector}/{tag}: {str(e)[:60]}")
                 continue
+            finally:
+                time.sleep(REQUEST_SPACING)
             for cbsa, rec in _parse_qcew(text).items():
                 if cbsa in data and sector in data[cbsa]:
                     data[cbsa][sector][f"emp_{tag}"] = rec["emp"]
@@ -107,7 +122,15 @@ def fetch_qcew(years_back=4):
         for sector, rec in sectors.items():
             rec["g1"] = (rec["emp"] / rec["emp_p1"] - 1) if rec.get("emp_p1") and rec.get("emp") else None
             rec["g3a"] = cagr(rec.get("emp_p3"), rec.get("emp"), 3)
-    return data, {"year": base_year, "urls": used_urls[:3]}
+    missing = [x for x in SECTORS if x not in loaded]
+    if missing:
+        print(f"warning: QCEW loaded {len(loaded)}/{len(SECTORS)} sectors; "
+              f"missing {', '.join(missing)} -> {'; '.join(failures[:3])}",
+              file=sys.stderr)
+    return data, {"year": base_year, "urls": used_urls[:3],
+                  "sectorsLoaded": len(loaded), "sectorsTotal": len(SECTORS),
+                  "sectorsMissing": missing[:8],
+                  "sectorErrors": failures[:4]}
 
 
 def _parse_qcew(text):
