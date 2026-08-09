@@ -27,6 +27,10 @@ from pipeline.sources.common import (CbsaIndex, SourceError, cagr, fetch,  # noq
                                      read_zip_member, to_float, write_json)
 
 OUT_PATH = Path(__file__).resolve().parents[1] / "data" / "market-data.json"
+# Per-source last-known-good values. Kept separate from the published payload
+# because the payload itself gets overwritten by a bad run, and an outage that
+# lasts two days would otherwise destroy the very data needed to ride it out.
+LAST_GOOD_PATH = Path(__file__).resolve().parents[1] / "data" / "last-good.json"
 
 GAZETTEER_URLS = [
     "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2024_Gazetteer/2024_Gaz_cbsa_national.zip",
@@ -77,61 +81,74 @@ CARRY_FORWARD = {
 MAX_CARRY_DAYS = 45
 
 
-def load_previous():
-    """Last committed run, used to carry values through an upstream outage."""
-    if not OUT_PATH.exists():
+def load_json(path):
+    if not path.exists():
         return None
     try:
-        return json.loads(OUT_PATH.read_text())
+        return json.loads(path.read_text())
     except (ValueError, OSError):
         return None
 
 
-def carry_forward(previous, metros, status):
-    """Restore fields owned by failed sources from the previous run.
+def update_last_good(store, metros, status):
+    """Snapshot the fields of every source that succeeded on this run."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for name, fields in CARRY_FORWARD.items():
+        if not (status.get(name) or {}).get("ok"):
+            continue
+        snapshot = {}
+        for m in metros:
+            vals = {f: m[f] for f in fields if m.get(f) is not None}
+            if vals:
+                snapshot[m["id"]] = vals
+        if snapshot:
+            store[name] = {"generatedAt": stamp, "metros": snapshot}
+    return store
 
-    Only fills gaps — never overwrites a value the current run produced — and
-    records the age so the dashboard can label the source as stale rather than
-    presenting old numbers as fresh.
+
+def carry_forward(store, metros, status):
+    """Fill gaps left by failed sources from the last-known-good snapshot.
+
+    Only fills gaps — never overwrites a value this run produced — and records
+    the age so the dashboard can label the source stale rather than passing old
+    numbers off as fresh. Snapshots older than MAX_CARRY_DAYS are dropped.
     """
-    if not previous:
-        return
-    try:
-        stamp = datetime.strptime(previous.get("generatedAt", ""),
-                                  "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return
-    age = datetime.now(timezone.utc) - stamp
-    if age > timedelta(days=MAX_CARRY_DAYS):
-        return
-    prev_by_id = {m.get("id"): m for m in previous.get("metros", [])}
-    prev_sources = previous.get("sources", {})
-
+    now = datetime.now(timezone.utc)
+    by_id = {m["id"]: m for m in metros}
     for name, fields in CARRY_FORWARD.items():
         entry = status.get(name)
         if not entry or entry.get("ok"):
             continue
-        # Nothing to carry if the source was not working last time either.
-        if not (prev_sources.get(name) or {}).get("ok"):
+        snap = store.get(name)
+        if not snap or not snap.get("metros"):
+            continue
+        try:
+            stamp = datetime.strptime(snap["generatedAt"],
+                                      "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except (ValueError, KeyError):
+            continue
+        age = now - stamp
+        if age > timedelta(days=MAX_CARRY_DAYS):
+            entry["staleDropped"] = f"last good data is {age.days}d old (>{MAX_CARRY_DAYS}d)"
             continue
         filled = 0
-        for m in metros:
-            prev = prev_by_id.get(m.get("id"))
-            if not prev:
+        for mid, vals in snap["metros"].items():
+            m = by_id.get(mid)
+            if not m:
                 continue
             touched = False
-            for f in fields:
-                if m.get(f) is None and prev.get(f) is not None:
-                    m[f] = prev[f]
+            for f, v in vals.items():
+                if f in fields and m.get(f) is None:
+                    m[f] = v
                     touched = True
             filled += 1 if touched else 0
         if filled:
             entry["state"] = "stale"
-            entry["carriedFrom"] = previous["generatedAt"]
+            entry["carriedFrom"] = snap["generatedAt"]
             entry["carriedAgeHours"] = round(age.total_seconds() / 3600, 1)
             entry["metrosCarried"] = filled
             print(f"note: {name} failed; carried {filled} metros forward from "
-                  f"{previous['generatedAt']}", file=sys.stderr)
+                  f"{snap['generatedAt']}", file=sys.stderr)
 
 
 class Runner:
@@ -209,7 +226,7 @@ def r(v, places=4):
 
 def main():
     run = Runner()
-    previous = load_previous()
+    last_good = load_json(LAST_GOOD_PATH) or {}
 
     # --- spine: Zillow metro list ---------------------------------------
     zhvi = run.run("zhvi", market.fetch_zillow, required=True, kind="zhvi")
@@ -364,8 +381,9 @@ def main():
     run.status["policy"] = {"ok": policy_hits > 0, "label": SOURCE_LABELS["policy"],
                             "metrosMatched": policy_hits, **policy.meta()}
 
-    # --- carry forward anything a failed source would have supplied -------
-    carry_forward(previous, metros, run.status)
+    # --- last-known-good: snapshot what worked, backfill what did not -----
+    update_last_good(last_good, metros, run.status)
+    carry_forward(last_good, metros, run.status)
 
     # --- derived ratios ---------------------------------------------------
     for m in metros:
@@ -446,6 +464,7 @@ def main():
         "national": {k: r(v, 5) for k, v in nat.items() if v is not None},
         "metros": metros,
     }
+    write_json(LAST_GOOD_PATH, last_good)
     size = write_json(OUT_PATH, out)
     print(f"wrote {OUT_PATH} ({size/1024:.0f} KB)")
     print(f"  metros={coverage['metros']} employment={coverage['withEmployment']} "
