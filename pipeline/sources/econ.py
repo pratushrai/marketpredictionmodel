@@ -52,6 +52,10 @@ QCEW_ANNUAL = "https://data.bls.gov/cew/data/api/{year}/a/industry/{code}.csv"
 QCEW_SINGLEFILE = "https://data.bls.gov/cew/data/files/{year}/csv/{year}_annual_singlefile.zip"
 # QCEW aggregation levels for MSA totals by industry.
 MSA_AGGLVL = {"40", "41", "42", "43", "44", "45", "46", "47", "48"}
+# A preliminary vintage gives itself away by carrying almost no sectors (the
+# live 2025 file had 1 of 13). Gating on sector count keeps this scale-free —
+# an absolute metro floor would be wrong for any smaller universe.
+MIN_SECTORS = 8
 
 
 def fetch_qcew_singlefile(year, wanted_codes):
@@ -138,12 +142,26 @@ def fetch_qcew(years_back=6):
         for code in codes:
             wanted.setdefault(code, []).append(sector)
 
+    # The newest file that merely *exists* is not good enough: BLS publishes a
+    # preliminary annual file that can carry the total alone for a fraction of
+    # metros. Taking it silently halved coverage and dropped every sector, so a
+    # year must look complete before it is accepted as the base.
     base_year, base_rows, failures = None, None, []
     for year in range(now_year, now_year - years_back, -1):
         try:
             rows = fetch_qcew_singlefile(year, set(wanted))
         except SourceError as e:
             failures.append(f"singlefile/{year}: {str(e)[:70]}")
+            continue
+        sectors_present = sum(
+            1 for _sector, (codes, _l) in SECTORS.items()
+            if any(rows.get(c) for c in codes))
+        metros_present = max((len(v) for v in rows.values()), default=0)
+        if sectors_present < MIN_SECTORS:
+            failures.append(
+                f"singlefile/{year}: preliminary — only {sectors_present}/"
+                f"{len(SECTORS)} sectors across {metros_present} metros "
+                f"(need >={MIN_SECTORS}); falling back to an earlier vintage")
             continue
         base_year, base_rows = year, rows
         break
@@ -199,7 +217,8 @@ def fetch_qcew(years_back=6):
     if missing:
         print(f"warning: QCEW loaded {len(loaded)}/{len(SECTORS)} sectors; "
               f"missing {', '.join(missing)}", file=sys.stderr)
-    return data, {"year": base_year, "sectorsLoaded": len(loaded),
+    return data, {"year": base_year, "metros": len(data),
+                  "sectorsLoaded": len(loaded),
                   "sectorsTotal": len(SECTORS), "sectorsMissing": missing[:8],
                   "sectorCodes": chosen, "sharedCodes": dupes,
                   "sectorErrors": failures[:6]}

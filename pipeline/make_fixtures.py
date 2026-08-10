@@ -198,16 +198,22 @@ def write_qcew_singlefile(out):
     import io as _io
     header = ["area_fips", "own_code", "industry_code", "agglvl_code", "year",
               "qtr", "annual_avg_estabs", "annual_avg_emplvl", "avg_annual_pay"]
-    # 2025 deliberately absent: annual data lands ~9 months in arrears
-    for year, scale in ((2024, 1.0), (2023, 0.975), (2021, 0.93)):
+    # 2025 exists but is preliminary — the total sector only, for a handful of
+    # metros — which is exactly the trap that halved live coverage.
+    for year, scale, preliminary in ((2025, 1.0, True), (2024, 1.0, False),
+                                     (2023, 0.975, False), (2021, 0.93, False)):
         buf = _io.StringIO()
         w = csv.writer(buf)
         w.writerow(header)
         for sector, (codes, _label) in SECTORS.items():
             code = codes[0]
-            for mrec in METROS:
+            if preliminary and sector != "total":
+                continue
+            for i, mrec in enumerate(METROS):
                 cbsa, pop = mrec[2], mrec[9]
                 if not mrec[3] or not pop:
+                    continue
+                if preliminary and i > 2:
                     continue
                 share = {"total": 0.45, "construction": 0.03, "manufacturing": 0.05,
                          "wholesale": 0.02, "retail": 0.05, "transport": 0.035,
