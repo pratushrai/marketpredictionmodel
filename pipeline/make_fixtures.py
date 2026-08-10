@@ -198,7 +198,8 @@ def write_qcew_singlefile(out):
     import io as _io
     header = ["area_fips", "own_code", "industry_code", "agglvl_code", "year",
               "qtr", "annual_avg_estabs", "annual_avg_emplvl", "avg_annual_pay"]
-    for year, scale in ((2025, 1.0), (2024, 0.975), (2022, 0.93)):
+    # 2025 deliberately absent: annual data lands ~9 months in arrears
+    for year, scale in ((2024, 1.0), (2023, 0.975), (2021, 0.93)):
         buf = _io.StringIO()
         w = csv.writer(buf)
         w.writerow(header)

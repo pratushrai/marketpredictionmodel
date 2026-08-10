@@ -120,120 +120,73 @@ def _qcew_cbsa(area_fips):
     return None
 
 
-def fetch_qcew(years_back=4):
-    """Employment/wages by sector by metro, for the latest available year and
-    a 1- and 3-year lag.
+def fetch_qcew(years_back=6):
+    """Employment, establishments and wages by NAICS sector for every metro.
 
-    Returns ({cbsa: {sector: {...}}}, meta). QCEW annual data publishes with
-    roughly a nine-month lag, so the latest complete year is discovered by
-    probing backwards rather than assumed.
+    The annual single file is the primary source: it is the only place BLS
+    publishes metro rows for individual industries (the by-industry endpoint
+    carries county rows for everything except the '10' total). Its base year is
+    discovered by probing backwards, because annual data lands roughly nine
+    months after the year ends — assuming the year the by-industry endpoint
+    offers silently produced no data at all.
+
+    Every sector is read from the same vintage so growth rates stay comparable.
     """
     now_year = datetime.now(timezone.utc).year
-    base_year = None
-    data = {}
-    used_urls = []
-    failures = []
-    loaded = []
-    chosen = {}
-
+    wanted = {}
     for sector, (codes, _label) in SECTORS.items():
-        # Establish which year is available using the first sector, then reuse.
-        candidate_years = ([base_year] if base_year
-                           else list(range(now_year - 1, now_year - years_back - 2, -1)))
-        got = False
-        for year, code in ((y, c) for y in candidate_years if y for c in codes):
-            try:
-                text, url = fetch(QCEW_ANNUAL.format(year=year, code=code),
-                                  fixture=f"qcew_{sector}_{'cur' if year == base_year or base_year is None else year}.csv",
-                                  want="text", attempts=3)
-            except SourceError as e:
-                failures.append(f"{sector}[{code}]/{year}: {str(e)[:60]}")
-                continue
-            rows = _parse_qcew(text)
-            if not rows:
-                failures.append(f"{sector}[{code}]/{year}: 0 MSA rows; "
-                                + _describe_qcew(text))
-                continue
-            chosen[sector] = code
-            base_year = base_year or year
-            used_urls.append(url)
-            for cbsa, rec in rows.items():
-                data.setdefault(cbsa, {}).setdefault(sector, {}).update(
-                    {"emp": rec["emp"], "estabs": rec["estabs"], "wage": rec["wage"]})
-            got = True
-            break
-        if got:
-            loaded.append(sector)
-        elif base_year is None:
-            raise SourceError(
-                f"QCEW unavailable for any year {now_year-1}..{now_year-years_back-1}. "
-                + " | ".join(failures[:4]))
-        # BLS throttles rapid sequential requests; pace them so sectors after
-        # the first are not silently dropped.
-        time.sleep(REQUEST_SPACING)
+        for code in codes:
+            wanted.setdefault(code, []).append(sector)
 
-    # Lagged years for growth rates.
-    for lag, tag in ((1, "p1"), (3, "p3")):
-        year = base_year - lag
+    base_year, base_rows, failures = None, None, []
+    for year in range(now_year, now_year - years_back, -1):
+        try:
+            rows = fetch_qcew_singlefile(year, set(wanted))
+        except SourceError as e:
+            failures.append(f"singlefile/{year}: {str(e)[:70]}")
+            continue
+        base_year, base_rows = year, rows
+        break
+
+    if base_rows is None:
+        raise SourceError("QCEW annual single file unavailable for "
+                          f"{now_year - years_back + 1}..{now_year}. "
+                          + " | ".join(failures[:3]))
+
+    data, chosen, loaded = {}, {}, []
+
+    def merge(by_code, tag):
         for sector, (codes, _label) in SECTORS.items():
-            code = chosen.get(sector, codes[0])
-            try:
-                text, _ = fetch(QCEW_ANNUAL.format(year=year, code=code),
-                                fixture=f"qcew_{sector}_{tag}.csv", want="text", attempts=3)
-            except SourceError as e:
-                failures.append(f"{sector}/{tag}: {str(e)[:60]}")
+            # Keep the first candidate code that this vintage actually has, so
+            # specific NAICS detail wins over the broader aggregate.
+            code = chosen.get(sector) or next((c for c in codes if by_code.get(c)), None)
+            if not code or not by_code.get(code):
                 continue
-            finally:
-                time.sleep(REQUEST_SPACING)
-            for cbsa, rec in _parse_qcew(text).items():
-                if cbsa in data and sector in data[cbsa]:
-                    data[cbsa][sector][f"emp_{tag}"] = rec["emp"]
+            for cbsa, rec in by_code[code].items():
+                slot = data.setdefault(cbsa, {}).setdefault(sector, {})
+                if tag is None:
+                    slot.update({"emp": rec["emp"], "estabs": rec["estabs"],
+                                 "wage": rec["wage"]})
+                elif slot.get("emp") is not None:
+                    slot[f"emp_{tag}"] = rec["emp"]
+            if tag is None:
+                chosen[sector] = code
+                loaded.append(sector)
+
+    merge(base_rows, None)
+    for lag, tag in ((1, "p1"), (3, "p3")):
+        try:
+            merge(fetch_qcew_singlefile(base_year - lag, set(wanted)), tag)
+        except SourceError as e:
+            failures.append(f"singlefile/{base_year - lag}: {str(e)[:60]}")
 
     if not data:
-        raise SourceError("QCEW produced no metro rows")
+        raise SourceError("QCEW single file parsed but produced no metro rows")
 
-    # Anything the by-industry endpoint could not supply comes from the annual
-    # single file, which is the only place metro rows exist for most sectors.
-    missing = [x for x in SECTORS if x not in loaded]
-    singlefile_years = []
-    if missing:
-        wanted = {}
-        for sector in missing:
-            for code in SECTORS[sector][0]:
-                wanted.setdefault(code, []).append(sector)
-        for year, tag in ((base_year, None), (base_year - 1, "p1"), (base_year - 3, "p3")):
-            try:
-                by_code = fetch_qcew_singlefile(year, set(wanted))
-            except SourceError as e:
-                failures.append(f"singlefile/{year}: {str(e)[:70]}")
-                continue
-            singlefile_years.append(year)
-            for sector in missing:
-                for code in SECTORS[sector][0]:
-                    rows = by_code.get(code)
-                    if not rows:
-                        continue
-                    for cbsa, rec in rows.items():
-                        slot = data.setdefault(cbsa, {}).setdefault(sector, {})
-                        if tag is None:
-                            slot.update({"emp": rec["emp"], "estabs": rec["estabs"],
-                                         "wage": rec["wage"]})
-                        elif slot.get("emp") is not None:
-                            slot[f"emp_{tag}"] = rec["emp"]
-                    if tag is None:
-                        chosen[sector] = code
-                        if sector not in loaded:
-                            loaded.append(sector)
-                    break
-        missing = [x for x in SECTORS if x not in loaded]
-    if missing:
-        print(f"warning: QCEW loaded {len(loaded)}/{len(SECTORS)} sectors; "
-              f"missing {', '.join(missing)} -> {'; '.join(failures[:3])}",
-              file=sys.stderr)
-    # Derive growth rates per sector.
-    for cbsa, sectors in data.items():
-        for sector, rec in sectors.items():
-            rec["g1"] = (rec["emp"] / rec["emp_p1"] - 1) if rec.get("emp_p1") and rec.get("emp") else None
+    for sectors in data.values():
+        for rec in sectors.values():
+            rec["g1"] = (rec["emp"] / rec["emp_p1"] - 1) \
+                if rec.get("emp_p1") and rec.get("emp") else None
             rec["g3a"] = cagr(rec.get("emp_p3"), rec.get("emp"), 3)
 
     import collections
@@ -242,12 +195,13 @@ def fetch_qcew(years_back=4):
     if dupes:
         print(f"warning: QCEW fell back to shared aggregate codes {dupes}; "
               "those sectors are no longer independent signals", file=sys.stderr)
-    return data, {"year": base_year, "urls": used_urls[:3],
-                  "singlefileYears": singlefile_years,
-                  "sectorsLoaded": len(loaded), "sectorsTotal": len(SECTORS),
-                  "sectorsMissing": missing[:8],
-                  "sectorCodes": chosen,
-                  "sharedCodes": dupes,
+    missing = [x for x in SECTORS if x not in loaded]
+    if missing:
+        print(f"warning: QCEW loaded {len(loaded)}/{len(SECTORS)} sectors; "
+              f"missing {', '.join(missing)}", file=sys.stderr)
+    return data, {"year": base_year, "sectorsLoaded": len(loaded),
+                  "sectorsTotal": len(SECTORS), "sectorsMissing": missing[:8],
+                  "sectorCodes": chosen, "sharedCodes": dupes,
                   "sectorErrors": failures[:6]}
 
 
