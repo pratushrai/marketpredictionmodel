@@ -16,20 +16,31 @@ from .common import KEYS, SourceError, cagr, fetch, read_csv_rows, to_float
 
 # NAICS sectors pulled from QCEW. Keys are the pipeline's short names; values
 # are (QCEW industry_code, human label).
+# NAICS sectors pulled from QCEW. Each entry lists candidate industry codes
+# tried in order until one actually yields metro rows.
+#
+# Raw NAICS sector codes do not work on this endpoint: hyphenated ones (31-33,
+# 44-45, 48-49) return 404, and plain ones (23, 42) download but contain no
+# MSA-level rows. BLS's own aggregation codes (10, 1012, 1013, ...) are the
+# ones published at metro level. The specific NAICS code is still tried first
+# so real sector detail is preserved wherever BLS offers it; the broader
+# aggregate is only a fallback, and when several sectors land on the same
+# fallback code their demand signals stop being independent — which the run
+# reports via sectorCodes/sharedCodes rather than hiding.
 SECTORS = {
-    "total":        ("10",    "Total, all industries"),
-    "construction": ("23",    "Construction"),
-    "manufacturing": ("31-33", "Manufacturing"),
-    "wholesale":    ("42",    "Wholesale trade"),
-    "retail":       ("44-45", "Retail trade"),
-    "transport":    ("48-49", "Transportation and warehousing"),
-    "utilities":    ("22",    "Utilities"),
-    "information":  ("51",    "Information"),
-    "finance":      ("52",    "Finance and insurance"),
-    "professional": ("54",    "Professional and technical services"),
-    "health":       ("62",    "Health care and social assistance"),
-    "leisure":      ("71",    "Arts, entertainment, and recreation"),
-    "accommodation": ("72",   "Accommodation and food services"),
+    "total":         (["10"], "Total, all industries"),
+    "construction":  (["23", "1012"], "Construction"),
+    "manufacturing": (["31-33", "31", "1013"], "Manufacturing"),
+    "wholesale":     (["42", "1021"], "Wholesale trade"),
+    "retail":        (["44-45", "44", "1021"], "Retail trade"),
+    "transport":     (["48-49", "48", "1021"], "Transportation and warehousing"),
+    "utilities":     (["22", "1021"], "Utilities"),
+    "information":   (["51", "1022"], "Information"),
+    "finance":       (["52", "1023"], "Finance and insurance"),
+    "professional":  (["54", "1024"], "Professional and business services"),
+    "health":        (["62", "1025"], "Education and health services"),
+    "leisure":       (["71", "1026"], "Leisure and hospitality"),
+    "accommodation": (["72", "1026"], "Accommodation and food services"),
 }
 
 QCEW_ANNUAL = "https://data.bls.gov/cew/data/api/{year}/a/industry/{code}.csv"
@@ -61,26 +72,27 @@ def fetch_qcew(years_back=4):
     used_urls = []
     failures = []
     loaded = []
+    chosen = {}
 
-    for sector, (code, _label) in SECTORS.items():
+    for sector, (codes, _label) in SECTORS.items():
         # Establish which year is available using the first sector, then reuse.
         candidate_years = ([base_year] if base_year
                            else list(range(now_year - 1, now_year - years_back - 2, -1)))
         got = False
-        for year in candidate_years:
-            if year is None:
-                continue
+        for year, code in ((y, c) for y in candidate_years if y for c in codes):
             try:
                 text, url = fetch(QCEW_ANNUAL.format(year=year, code=code),
                                   fixture=f"qcew_{sector}_{'cur' if year == base_year or base_year is None else year}.csv",
                                   want="text", attempts=3)
             except SourceError as e:
-                failures.append(f"{sector}/{year}: {str(e)[:70]}")
+                failures.append(f"{sector}[{code}]/{year}: {str(e)[:60]}")
                 continue
             rows = _parse_qcew(text)
             if not rows:
-                failures.append(f"{sector}/{year}: downloaded but parsed 0 MSA rows")
+                failures.append(f"{sector}[{code}]/{year}: 0 MSA rows; "
+                                + _describe_qcew(text))
                 continue
+            chosen[sector] = code
             base_year = base_year or year
             used_urls.append(url)
             for cbsa, rec in rows.items():
@@ -101,7 +113,8 @@ def fetch_qcew(years_back=4):
     # Lagged years for growth rates.
     for lag, tag in ((1, "p1"), (3, "p3")):
         year = base_year - lag
-        for sector, (code, _label) in SECTORS.items():
+        for sector, (codes, _label) in SECTORS.items():
+            code = chosen.get(sector, codes[0])
             try:
                 text, _ = fetch(QCEW_ANNUAL.format(year=year, code=code),
                                 fixture=f"qcew_{sector}_{tag}.csv", want="text", attempts=3)
@@ -127,10 +140,33 @@ def fetch_qcew(years_back=4):
         print(f"warning: QCEW loaded {len(loaded)}/{len(SECTORS)} sectors; "
               f"missing {', '.join(missing)} -> {'; '.join(failures[:3])}",
               file=sys.stderr)
+    import collections
+    dupes = {c: sorted(k for k, v in chosen.items() if v == c)
+             for c, n in collections.Counter(chosen.values()).items() if n > 1}
+    if dupes:
+        print(f"warning: QCEW fell back to shared aggregate codes {dupes}; "
+              "those sectors are no longer independent signals", file=sys.stderr)
     return data, {"year": base_year, "urls": used_urls[:3],
                   "sectorsLoaded": len(loaded), "sectorsTotal": len(SECTORS),
                   "sectorsMissing": missing[:8],
-                  "sectorErrors": failures[:4]}
+                  "sectorCodes": chosen,
+                  "sharedCodes": dupes,
+                  "sectorErrors": failures[:6]}
+
+
+def _describe_qcew(text, limit=600):
+    """Summarise a QCEW file that yielded no metro rows, for diagnosis."""
+    import collections
+    kinds, aggs, n = collections.Counter(), collections.Counter(), 0
+    for row in read_csv_rows(text):
+        n += 1
+        area = (row.get("area_fips") or "").strip().upper()
+        kinds[area[:1] if area else "?"] += 1
+        aggs[(row.get("agglvl_code") or "").strip()] += 1
+        if n >= limit:
+            break
+    return (f"rows={n} areaPrefixes={dict(kinds.most_common(4))} "
+            f"agglvl={dict(aggs.most_common(4))}")
 
 
 def _parse_qcew(text):

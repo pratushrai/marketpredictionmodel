@@ -169,7 +169,8 @@ def write_qcew(out):
     """QCEW industry files: all areas for one NAICS sector, MSA rows as C####."""
     header = ["area_fips", "own_code", "industry_code", "agglvl_code", "year",
               "qtr", "annual_avg_estabs", "annual_avg_emplvl", "avg_annual_pay"]
-    for sector, (code, _label) in SECTORS.items():
+    for sector, (codes, _label) in SECTORS.items():
+        code = codes[0]
         for tag, scale in (("cur", 1.0), ("p1", 0.975), ("p3", 0.93)):
             rows = [header]
             for mrec in METROS:
