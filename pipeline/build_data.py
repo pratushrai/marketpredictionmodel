@@ -452,6 +452,13 @@ def main():
         "withLocalPortal": sum(1 for m in metros if m.get("localPermits")),
         "staleSources": sorted(k for k, v in run.status.items()
                                if v.get("state") == "stale"),
+        # Per-class counts, because coverage varies a lot by class: BLS
+        # suppresses sector detail for smaller metros, so the commercial
+        # classes legitimately cover fewer markets than the residential ones.
+        "assetCoverage": {
+            cls: sum(1 for m in metros if (m.get("assetScores") or {}).get(cls) is not None)
+            for cls in model.ASSET_CLASSES
+        },
         "highGrowth2pct": sum(1 for m in metros if m.get("highGrowth")),
     }
 

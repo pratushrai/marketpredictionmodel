@@ -1118,6 +1118,35 @@ function renderMeth() {
   para(box, "Unlike every other source here, the policy layer is a curated table rather than an API pull — no authoritative machine-readable feed exists for how a jurisdiction treats landlords and developers. Each field is a published, checkable fact: effective property tax rate, statutory rent-control regime, landlord-tenant process, land-use reform posture, and insurance-market condition. The composite weighting is this pipeline's own.");
   para(box, "Compiled from " + (pol.compiledFrom || "published data") + ", covering " + (pol.states || 51) + " states, scheduled for review by " + (pol.reviewBy || "—") + ". Metros spanning several states are scored on the blend, carrying through the most restrictive rent-control regime. Higher risk means more risk to an owner or developer.");
 
+  head3(box, "Coverage by asset class");
+  para(box, "BLS suppresses sector-level employment for smaller metros, because "
+    + "publishing it could identify individual employers. The commercial classes "
+    + "depend on that detail, so they legitimately cover fewer markets than the "
+    + "residential ones — a blank score means the underlying data is withheld for "
+    + "that metro, not that the market scored badly.");
+  const ac = d.coverage.assetCoverage || {};
+  if (Object.keys(ac).length) {
+    const t2 = document.createElement("table");
+    const th2 = document.createElement("thead"), r2 = document.createElement("tr");
+    for (const h of ["Asset class", "Metros scored", "Share of " + d.coverage.metros]) {
+      const th = document.createElement("th"); th.textContent = h; r2.appendChild(th);
+    }
+    th2.appendChild(r2); t2.appendChild(th2);
+    const tb2 = document.createElement("tbody");
+    for (const [k, v] of Object.entries(ac).sort((a, b) => b[1] - a[1])) {
+      const cls = (d.model.assetClasses || {})[k] || {};
+      const tr = document.createElement("tr");
+      const c1 = document.createElement("td");
+      c1.textContent = cls.label || k;
+      c1.style.color = "var(--text-1)"; c1.style.fontWeight = "600";
+      const c2 = document.createElement("td"); c2.textContent = fmtInt(v);
+      const c3 = document.createElement("td");
+      c3.textContent = Math.round(100 * v / d.coverage.metros) + "%";
+      tr.append(c1, c2, c3); tb2.appendChild(tr);
+    }
+    t2.appendChild(tb2); box.appendChild(t2);
+  }
+
   head3(box, "Coverage this run");
   const c = d.coverage;
   para(box, [c.metros + " metros", c.withEmployment + " with BLS sector employment",
