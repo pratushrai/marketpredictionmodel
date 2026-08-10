@@ -44,6 +44,68 @@ SECTORS = {
 }
 
 QCEW_ANNUAL = "https://data.bls.gov/cew/data/api/{year}/a/industry/{code}.csv"
+# The by-industry endpoint publishes county rows only (agglvl 73/74) for
+# specific industries — metro rows exist there for the "10" total alone, which
+# is why every other sector came back empty. The annual single file is the
+# complete dataset, so metro rows for every industry are read from it instead,
+# in one download per year rather than one per sector.
+QCEW_SINGLEFILE = "https://data.bls.gov/cew/data/files/{year}/csv/{year}_annual_singlefile.zip"
+# QCEW aggregation levels for MSA totals by industry.
+MSA_AGGLVL = {"40", "41", "42", "43", "44", "45", "46", "47", "48"}
+
+
+def fetch_qcew_singlefile(year, wanted_codes):
+    """Stream the annual single file, keeping only MSA rows for wanted codes.
+
+    The archive is large, so it is read line by line out of the zip rather than
+    loaded into memory; only a few tens of thousands of rows survive the filter.
+    Returns {industry_code: {cbsa: {emp, estabs, wage}}}.
+    """
+    import csv as _csv
+    import io as _io
+    import zipfile as _zipfile
+
+    raw, _url = fetch(QCEW_SINGLEFILE.format(year=year),
+                      fixture=f"qcew_singlefile_{year}.zip", attempts=2, timeout=900)
+    out = {}
+    with _zipfile.ZipFile(_io.BytesIO(raw)) as zf:
+        names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+        if not names:
+            raise SourceError(f"singlefile {year} has no csv member")
+        with zf.open(names[0]) as fh:
+            reader = _csv.DictReader(_io.TextIOWrapper(fh, encoding="utf-8-sig",
+                                                       errors="replace"))
+            for row in reader:
+                area = (row.get("area_fips") or "").strip().upper()
+                if not area.startswith("C"):
+                    continue
+                code = (row.get("industry_code") or "").strip()
+                if code not in wanted_codes:
+                    continue
+                if (row.get("agglvl_code") or "").strip() not in MSA_AGGLVL:
+                    continue
+                own = (row.get("own_code") or "").strip()
+                if own not in ("0", "5"):
+                    continue
+                cbsa = _qcew_cbsa(area)
+                emp = to_float(row.get("annual_avg_emplvl"))
+                if not cbsa or emp is None:
+                    continue
+                bucket = out.setdefault(code, {})
+                prev = bucket.get(cbsa)
+                if prev is None or (own == "0" and prev.get("own") != "0"):
+                    bucket[cbsa] = {
+                        "emp": emp,
+                        "estabs": to_float(row.get("annual_avg_estabs")),
+                        "wage": to_float(row.get("avg_annual_pay")),
+                        "own": own,
+                    }
+    for bucket in out.values():
+        for rec in bucket.values():
+            rec.pop("own", None)
+    if not out:
+        raise SourceError(f"singlefile {year} yielded no MSA rows")
+    return out
 # Seconds between BLS requests. Thirteen sectors across three years is ~39
 # calls; fired back-to-back, everything after the first sector was being
 # rejected, which left the commercial asset classes unscored.
@@ -130,16 +192,50 @@ def fetch_qcew(years_back=4):
     if not data:
         raise SourceError("QCEW produced no metro rows")
 
+    # Anything the by-industry endpoint could not supply comes from the annual
+    # single file, which is the only place metro rows exist for most sectors.
+    missing = [x for x in SECTORS if x not in loaded]
+    singlefile_years = []
+    if missing:
+        wanted = {}
+        for sector in missing:
+            for code in SECTORS[sector][0]:
+                wanted.setdefault(code, []).append(sector)
+        for year, tag in ((base_year, None), (base_year - 1, "p1"), (base_year - 3, "p3")):
+            try:
+                by_code = fetch_qcew_singlefile(year, set(wanted))
+            except SourceError as e:
+                failures.append(f"singlefile/{year}: {str(e)[:70]}")
+                continue
+            singlefile_years.append(year)
+            for sector in missing:
+                for code in SECTORS[sector][0]:
+                    rows = by_code.get(code)
+                    if not rows:
+                        continue
+                    for cbsa, rec in rows.items():
+                        slot = data.setdefault(cbsa, {}).setdefault(sector, {})
+                        if tag is None:
+                            slot.update({"emp": rec["emp"], "estabs": rec["estabs"],
+                                         "wage": rec["wage"]})
+                        elif slot.get("emp") is not None:
+                            slot[f"emp_{tag}"] = rec["emp"]
+                    if tag is None:
+                        chosen[sector] = code
+                        if sector not in loaded:
+                            loaded.append(sector)
+                    break
+        missing = [x for x in SECTORS if x not in loaded]
+    if missing:
+        print(f"warning: QCEW loaded {len(loaded)}/{len(SECTORS)} sectors; "
+              f"missing {', '.join(missing)} -> {'; '.join(failures[:3])}",
+              file=sys.stderr)
     # Derive growth rates per sector.
     for cbsa, sectors in data.items():
         for sector, rec in sectors.items():
             rec["g1"] = (rec["emp"] / rec["emp_p1"] - 1) if rec.get("emp_p1") and rec.get("emp") else None
             rec["g3a"] = cagr(rec.get("emp_p3"), rec.get("emp"), 3)
-    missing = [x for x in SECTORS if x not in loaded]
-    if missing:
-        print(f"warning: QCEW loaded {len(loaded)}/{len(SECTORS)} sectors; "
-              f"missing {', '.join(missing)} -> {'; '.join(failures[:3])}",
-              file=sys.stderr)
+
     import collections
     dupes = {c: sorted(k for k, v in chosen.items() if v == c)
              for c, n in collections.Counter(chosen.values()).items() if n > 1}
@@ -147,6 +243,7 @@ def fetch_qcew(years_back=4):
         print(f"warning: QCEW fell back to shared aggregate codes {dupes}; "
               "those sectors are no longer independent signals", file=sys.stderr)
     return data, {"year": base_year, "urls": used_urls[:3],
+                  "singlefileYears": singlefile_years,
                   "sectorsLoaded": len(loaded), "sectorsTotal": len(SECTORS),
                   "sectorsMissing": missing[:8],
                   "sectorCodes": chosen,

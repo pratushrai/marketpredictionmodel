@@ -193,6 +193,38 @@ def write_qcew(out):
                 csv.writer(f).writerows(rows)
 
 
+def write_qcew_singlefile(out):
+    """Annual single file: county rows plus the MSA rows only it carries."""
+    import io as _io
+    header = ["area_fips", "own_code", "industry_code", "agglvl_code", "year",
+              "qtr", "annual_avg_estabs", "annual_avg_emplvl", "avg_annual_pay"]
+    for year, scale in ((2025, 1.0), (2024, 0.975), (2022, 0.93)):
+        buf = _io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(header)
+        for sector, (codes, _label) in SECTORS.items():
+            code = codes[0]
+            for mrec in METROS:
+                cbsa, pop = mrec[2], mrec[9]
+                if not mrec[3] or not pop:
+                    continue
+                share = {"total": 0.45, "construction": 0.03, "manufacturing": 0.05,
+                         "wholesale": 0.02, "retail": 0.05, "transport": 0.035,
+                         "utilities": 0.004, "information": 0.02, "finance": 0.03,
+                         "professional": 0.05, "health": 0.07, "leisure": 0.012,
+                         "accommodation": 0.055}[sector]
+                emp = pop * share * scale * random.uniform(0.97, 1.03)
+                # county row (what the by-industry endpoint returns)
+                w.writerow(["01001", "5", code, "74", year, "A",
+                            round(emp / 30), round(emp / 20), 55000])
+                # MSA row (only present in the single file)
+                w.writerow([f"C{cbsa[:4]}", "0", code, "44", year, "A",
+                            round(emp / 12), round(emp), 62000])
+        with zipfile.ZipFile(out / f"qcew_singlefile_{year}.zip", "w",
+                             zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"{year}.annual.singlefile.csv", buf.getvalue())
+
+
 def write_bps_root(out):
     """Survey-root listing, used when the metro directory has moved."""
     # mirrors the real listing, where the metro files live under a renamed,
@@ -371,6 +403,7 @@ def main():
     write_hud(out)
     write_acs(out)
     write_qcew(out)
+    write_qcew_singlefile(out)
     write_bps_root(out)
     write_bps_index(out)
     write_bps(out)
