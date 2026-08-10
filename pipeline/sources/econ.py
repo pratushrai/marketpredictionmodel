@@ -50,8 +50,11 @@ QCEW_ANNUAL = "https://data.bls.gov/cew/data/api/{year}/a/industry/{code}.csv"
 # complete dataset, so metro rows for every industry are read from it instead,
 # in one download per year rather than one per sector.
 QCEW_SINGLEFILE = "https://data.bls.gov/cew/data/files/{year}/csv/{year}_annual_singlefile.zip"
-# QCEW aggregation levels for MSA totals by industry.
-MSA_AGGLVL = {"40", "41", "42", "43", "44", "45", "46", "47", "48"}
+# Deliberately no aggregation-level filter. Restricting to the metropolitan
+# agglvl codes dropped every micropolitan area and cut coverage from ~850
+# metros to 358; a C-prefixed area code with a matching industry already
+# identifies the row uniquely, which is how the by-industry parser has always
+# worked.
 # A preliminary vintage gives itself away by carrying almost no sectors (the
 # live 2025 file had 1 of 13). Gating on sector count keeps this scale-free —
 # an absolute metro floor would be wrong for any smaller universe.
@@ -85,8 +88,6 @@ def fetch_qcew_singlefile(year, wanted_codes):
                     continue
                 code = (row.get("industry_code") or "").strip()
                 if code not in wanted_codes:
-                    continue
-                if (row.get("agglvl_code") or "").strip() not in MSA_AGGLVL:
                     continue
                 own = (row.get("own_code") or "").strip()
                 if own not in ("0", "5"):

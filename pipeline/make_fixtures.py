@@ -227,6 +227,9 @@ def write_qcew_singlefile(out):
                 # MSA row (only present in the single file)
                 w.writerow([f"C{cbsa[:4]}", "0", code, "44", year, "A",
                             round(emp / 12), round(emp), 62000])
+                # micropolitan row: same shape, different agglvl — must survive
+                w.writerow([f"C{cbsa[:4]}", "0", code, "50", year, "A",
+                            round(emp / 12), round(emp), 62000])
         with zipfile.ZipFile(out / f"qcew_singlefile_{year}.zip", "w",
                              zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(f"{year}.annual.singlefile.csv", buf.getvalue())
